@@ -55,11 +55,10 @@ The application allows users to browse trending content, get recommendations bas
 
 1.  **Clone the Repository**
     ```bash
-    git clone https://github.com/YOUR_USERNAME/cinemate-recommender.git
-    cd cinemate-recommender
+    git clone https://github.com/rahilbadrakiya/Media-Recommendations-.git
+    cd Media-Recommendations-
     ```
-
-2.  **Create a Virtual Environment** (Recommended)
+ *   [GitHub P[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://share.streamlit.io/rahilbadrakiya/Media-Recommendations-) 
     ```bash
     python -m venv venv
     # Windows
