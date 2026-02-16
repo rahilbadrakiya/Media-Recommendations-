@@ -1,5 +1,7 @@
 # CineMate - Intelligent Movie Recommendation System
 
+[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://share.streamlit.io/rahilbadrakiya/Media-Recommendations-)
+
 **CineMate** is a full-stack movie recommendation application that provides personalized suggestions using machine learning. It features a modern, Netflix-inspired dark UI and a custom-built K-Nearest Neighbors (KNN) algorithm to find movies similar to your favorites.
 
 The application allows users to browse trending content, get recommendations based on specific movies or genres, and maintain a personal profile of liked movies.
@@ -58,7 +60,8 @@ The application allows users to browse trending content, get recommendations bas
     git clone https://github.com/rahilbadrakiya/Media-Recommendations-.git
     cd Media-Recommendations-
     ```
- *   [GitHub P[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://share.streamlit.io/rahilbadrakiya/Media-Recommendations-) 
+
+2.  **Create a Virtual Environment** (Recommended)
     ```bash
     python -m venv venv
     # Windows
