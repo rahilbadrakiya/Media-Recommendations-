@@ -21,6 +21,9 @@ env/
 # ── Database (local user data) ────────────────────────────
 users.db
 
+# ── Interaction log (local CF training data) ─────────────
+interactions.jsonl
+
 # ── Firebase Service Account (sensitive) ─────────────────
 firebase-service-account.json
 

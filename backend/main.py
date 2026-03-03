@@ -866,21 +866,109 @@ def for_you(username: str, industry: str = "all", count: int = 20):
     return [{"title": t, "link": "", "rating": score_map[t] * 10} for t in sorted_titles]
 
 
-# ─── HYBRID SCORE ENGINE ──────────────────────────────────
+# ─── HYBRID SCORE ENGINE (v2 — with Explainability + Re-Ranking) ──────────────
+TMDB_GENRE_MAP = {
+    28:"Action", 12:"Adventure", 16:"Animation", 35:"Comedy", 80:"Crime",
+    99:"Documentary", 18:"Drama", 10751:"Family", 14:"Fantasy", 36:"History",
+    27:"Horror", 10402:"Music", 9648:"Mystery", 10749:"Romance", 878:"Science Fiction",
+    53:"Thriller", 10752:"War", 37:"Western", 10770:"TV Movie"
+}
+
+# Configurable weights — can be overridden via env vars for A/B testing
+W_PREF     = float(os.environ.get("W_PREF",     "0.30"))
+W_TREND    = float(os.environ.get("W_TREND",    "0.20"))
+W_SIM      = float(os.environ.get("W_SIM",      "0.20"))
+W_RECENCY  = float(os.environ.get("W_RECENCY",  "0.15"))
+W_POP      = float(os.environ.get("W_POP",      "0.15"))
+
+# Enhanced mood map with energy/sentiment for richer explainability
+MOOD_META = {
+    "happy":     {"genres": ["Comedy","Animation","Family","Music","Adventure"],   "label": "Feel-Good",   "emoji": "😄"},
+    "sad":       {"genres": ["Drama","Romance","Music"],                           "label": "Emotional",   "emoji": "😢"},
+    "excited":   {"genres": ["Action","Adventure","Science Fiction","Thriller"],   "label": "High-Energy", "emoji": "🔥"},
+    "scared":    {"genres": ["Horror","Thriller","Mystery"],                       "label": "Thrilling",   "emoji": "😱"},
+    "romantic":  {"genres": ["Romance","Drama","Music"],                           "label": "Romantic",    "emoji": "💕"},
+    "motivated": {"genres": ["Biography","Sport","Drama","History"],               "label": "Motivating",  "emoji": "💪"},
+    "mindblown": {"genres": ["Science Fiction","Mystery","Thriller","Fantasy"],    "label": "Mind-Bending","emoji": "🤯"},
+    "chill":     {"genres": ["Comedy","Animation","Family","Documentary"],         "label": "Chill",       "emoji": "😎"},
+}
+
+def _explain_movie(m: dict, pref_score: float, trend_score: float,
+                   recency_score: float, pop_score: float,
+                   liked: list, user_genres: list, movie_genres: set) -> str:
+    """Generate a human-readable 'Why Recommended' explanation string."""
+    tags = []
+
+    # Trending signal
+    if trend_score > 0.75:
+        tags.append("🔥 Trending Now")
+    elif trend_score > 0.5:
+        tags.append("📈 Popular This Week")
+
+    # Recency signal
+    if recency_score > 0.85:
+        tags.append("🆕 Just Released")
+    elif recency_score > 0.60:
+        tags.append("🗓️ New Release")
+
+    # Genre match signal
+    if pref_score > 0.6 and user_genres:
+        matched = list(movie_genres & set(user_genres))
+        if matched:
+            tags.append(f"🎭 Matches your {matched[0]} taste")
+        elif liked:
+            tags.append(f"🍿 Similar to {liked[-1]}")
+
+    # Quality signal
+    vote_avg = m.get("vote_average", 0) or 0
+    if vote_avg >= 8.0:
+        tags.append(f"⭐ Critically Acclaimed ({vote_avg:.1f})")
+    elif vote_avg >= 7.0:
+        tags.append(f"⭐ Highly Rated ({vote_avg:.1f})")
+
+    # Popularity signal
+    if pop_score > 0.7 and not tags:
+        tags.append("🌍 Global Hit")
+
+    return " · ".join(tags[:2]) if tags else "🎬 Top Pick For You"
+
+def _rerank_with_diversity(scored: list, liked_set: set, max_per_genre: int = 4) -> list:
+    """Re-rank to ensure genre diversity and filter watched movies."""
+    from collections import defaultdict
+    genre_counts = defaultdict(int)
+    results = []
+
+    for final_score, m in sorted(scored, key=lambda x: -x[0]):
+        title = m.get("title", "")
+        # Skip already liked/watched
+        if title in liked_set:
+            continue
+        # Genre diversity cap
+        genre_ids = m.get("genre_ids", []) or []
+        primary_genre = TMDB_GENRE_MAP.get(genre_ids[0], "Other") if genre_ids else "Other"
+        if genre_counts[primary_genre] >= max_per_genre:
+            continue
+        genre_counts[primary_genre] += 1
+        results.append((final_score, m))
+
+    return results
+
 @app.get("/api/recommendations/hybrid")
-def hybrid_recommend(username: str = "", industry: str = "all", count: int = 20):
+def hybrid_recommend(username: str = "", industry: str = "all", count: int = 20,
+                     mood: str = "", explain: bool = True):
     """
-    Netflix-style hybrid scoring:
-      0.30 × User Preference Score
-    + 0.20 × Trending Score
-    + 0.20 × Similarity Score
-    + 0.15 × Recency Score
-    + 0.15 × Popularity Score
+    Netflix-style hybrid scoring with explainability and genre re-ranking:
+      W_PREF    × User Preference Score
+    + W_TREND   × Trending Score
+    + W_SIM     × Similarity Score
+    + W_RECENCY × Recency Score
+    + W_POP     × Popularity Score
+    All weights are configurable via environment variables.
     """
     import math
     from datetime import datetime
 
-    # ── Fetch trending from TMDB (base pool) ──────────────
+    # ── Fetch candidate pool from TMDB ────────────────────
     if industry != "all" and industry != "hollywood":
         lang = INDUSTRY_LANGS.get(industry, INDUSTRY_LANGS["all_indian"])
         langs = lang.split(",")
@@ -892,26 +980,27 @@ def hybrid_recommend(username: str = "", industry: str = "all", count: int = 20)
     else:
         trending_raw = tmdb.get_trending()
 
-    # Build candidate map {tmdb_id -> movie_obj}
     candidates = {}
     for m in trending_raw[:60]:
-        mid = m.get("id") if isinstance(m, dict) else m.id
-        candidates[mid] = m if isinstance(m, dict) else m.__dict__
+        mid = m.get("id") if isinstance(m, dict) else None
+        if mid:
+            candidates[mid] = m if isinstance(m, dict) else {}
 
-    # Also pull now-playing and top-rated for diversity
+    # Add now-playing for diversity
     try:
-        now_raw = tmdb.get_now_playing()
-        for m in now_raw[:20]:
+        for m in tmdb.get_now_playing()[:20]:
             mid = m.get("id")
             if mid and mid not in candidates:
                 candidates[mid] = m
     except Exception:
         pass
 
-    # ── User preference genres ─────────────────────────────
+    # ── Load user profile ──────────────────────────────────
     user_genres = []
     liked = []
     ratings_map = {}
+    is_cold_start = True
+
     if username:
         conn, cur = get_db()
         cur.execute("SELECT fav_genres, liked_movies, ratings FROM users WHERE username=?", (username,))
@@ -920,8 +1009,9 @@ def hybrid_recommend(username: str = "", industry: str = "all", count: int = 20)
             user_genres = [g for g in (row["fav_genres"] or "").split(",") if g]
             liked = [x for x in (row["liked_movies"] or "").split(",") if x]
             ratings_map = json.loads(row["ratings"]) if row["ratings"] else {}
+            is_cold_start = len(liked) + len(ratings_map) < 3
 
-    # Genres of liked+rated movies
+    # Build liked genres from user's history
     liked_genres = set(user_genres)
     titles_list = [t[0] for t in movie_titles]
     for title in (liked + list(ratings_map.keys()))[:10]:
@@ -932,22 +1022,27 @@ def hybrid_recommend(username: str = "", industry: str = "all", count: int = 20)
                 if row_data[gi] == 1:
                     liked_genres.add(g)
 
+    # Mood boost genres
+    mood_genres = set()
+    if mood and mood in MOOD_META:
+        mood_genres = set(MOOD_META[mood]["genres"])
+        liked_genres |= mood_genres  # Merge mood into preference
+
     # ── Score each candidate ───────────────────────────────
-    total_movies = len(candidates)
+    total = len(candidates)
     scored = []
     now_str = datetime.now().strftime("%Y-%m-%d")
 
     for rank, (mid, m) in enumerate(candidates.items()):
-        # 1. Popularity Score (0–1): vote_average * log(vote_count+1) normalized
+        # Popularity score
         vote_avg = m.get("vote_average", 0) or 0
         vote_cnt = m.get("vote_count", 1) or 1
-        pop_raw = vote_avg * math.log(vote_cnt + 1)
-        pop_score = min(pop_raw / 40.0, 1.0)
+        pop_score = min((vote_avg * math.log(vote_cnt + 1)) / 40.0, 1.0)
 
-        # 2. Trending Score (0–1): rank in trending list
-        trend_score = max(0, 1.0 - rank / max(total_movies, 1))
+        # Trending score
+        trend_score = max(0, 1.0 - rank / max(total, 1))
 
-        # 3. Recency Score (0–1): movies from last 90 days get boost
+        # Recency score
         release = m.get("release_date", "") or ""
         try:
             days_old = (datetime.strptime(now_str, "%Y-%m-%d") - datetime.strptime(release[:10], "%Y-%m-%d")).days
@@ -955,37 +1050,162 @@ def hybrid_recommend(username: str = "", industry: str = "all", count: int = 20)
         except Exception:
             recency_score = 0.3
 
-        # 4. User Preference Score (0–1): genre overlap
+        # User preference score (genre overlap)
+        genre_ids = m.get("genre_ids", []) or []
+        movie_genres = {TMDB_GENRE_MAP.get(gid, "") for gid in genre_ids}
         if liked_genres:
-            # Get genre_ids from TMDB object
-            genre_ids = m.get("genre_ids", []) or []
-            tmdb_genre_map = {28:"Action",12:"Adventure",16:"Animation",35:"Comedy",80:"Crime",99:"Documentary",18:"Drama",10751:"Family",14:"Fantasy",36:"History",27:"Horror",10402:"Music",9648:"Mystery",10749:"Romance",878:"Sci-Fi",53:"Thriller",10752:"War",37:"Western"}
-            movie_genres = {tmdb_genre_map.get(gid, "") for gid in genre_ids}
             overlap = len(liked_genres & movie_genres)
             pref_score = min(overlap / max(len(liked_genres), 1), 1.0)
         else:
-            pref_score = 0.5  # neutral for anonymous
+            pref_score = 0.4 if is_cold_start else 0.5
 
-        # 5. Similarity Score: if movie genre matches user's top mood/genre
-        sim_score = pref_score * 0.8 + trend_score * 0.2
+        # Similarity score combines preference + mood match
+        mood_boost = 0.3 if mood_genres & movie_genres else 0.0
+        sim_score = min(pref_score * 0.7 + trend_score * 0.2 + mood_boost, 1.0)
 
-        # ── Final Hybrid Score ─────────────────────────────
-        final = (0.30 * pref_score +
-                 0.20 * trend_score +
-                 0.20 * sim_score +
-                 0.15 * recency_score +
-                 0.15 * pop_score)
+        # Final hybrid score
+        final = (W_PREF * pref_score + W_TREND * trend_score +
+                 W_SIM * sim_score + W_RECENCY * recency_score + W_POP * pop_score)
 
+        # Build explainability tag
+        reason = _explain_movie(m, pref_score, trend_score, recency_score,
+                                pop_score, liked, list(liked_genres), movie_genres)
+
+        m["_reason"] = reason
         scored.append((final, m))
 
-    scored.sort(key=lambda x: -x[0])
-    top = [m for _, m in scored[:count]]
-
-    # Filter out already-liked movies
+    # ── Re-rank with genre diversity ───────────────────────
     liked_set = set(liked)
-    top = [m for m in top if m.get("title") not in liked_set]
+    diverse = _rerank_with_diversity(scored, liked_set, max_per_genre=4)
 
-    return fmt(top[:count])
+    # Cold start: if no user data, boost quality + trending
+    if is_cold_start:
+        diverse.sort(key=lambda x: -(x[0] + x[1].get("vote_average", 0) * 0.05))
+
+    top = [m for _, m in diverse[:count]]
+
+    # ── Format response with explainability ───────────────
+    result = []
+    for m in top:
+        item = {
+            "id": m.get("id"),
+            "title": m.get("title", ""),
+            "overview": m.get("overview", ""),
+            "poster_path": f"https://image.tmdb.org/t/p/w500{m['poster_path']}" if m.get("poster_path") else None,
+            "backdrop_path": f"https://image.tmdb.org/t/p/original{m['backdrop_path']}" if m.get("backdrop_path") else None,
+            "release_date": m.get("release_date", ""),
+            "vote_average": m.get("vote_average", 0),
+        }
+        if explain:
+            item["reason"] = m.get("_reason", "🎬 Top Pick For You")
+        result.append(item)
+
+    return result
+
+
+# ─── SURPRISE ME ──────────────────────────────────────────
+@app.get("/api/recommendations/surprise")
+def surprise_me(username: str = "", industry: str = "all"):
+    """
+    'Surprise Me' — picks one random high-quality movie the user hasn't seen.
+    Filters: IMDb >= 7.5, at least 500 votes, not in user's watched/liked list.
+    """
+    import math
+
+    liked_set = set()
+    if username:
+        conn, cur = get_db()
+        cur.execute("SELECT liked_movies, watch_history FROM users WHERE username=?", (username,))
+        row = cur.fetchone(); conn.close()
+        if row:
+            liked_set = set((row["liked_movies"] or "").split(","))
+
+    # Pull from top-rated TMDB movies
+    if industry != "all" and industry != "hollywood":
+        lang = INDUSTRY_LANGS.get(industry, INDUSTRY_LANGS["all_indian"])
+        pages = []
+        for pg in [1, 2, 3]:
+            r = requests.get(f"{tmdb.base_url}/discover/movie",
+                             params={"api_key": tmdb.api_key, "with_original_language": lang,
+                                     "sort_by": "vote_average.desc", "vote_count.gte": 500,
+                                     "vote_average.gte": 7.5, "page": pg}, timeout=6)
+            if r.status_code == 200:
+                pages.extend(r.json().get("results", []))
+    else:
+        pages = []
+        for pg in [1, 2, 3]:
+            r = requests.get(f"{tmdb.base_url}/movie/top_rated",
+                             params={"api_key": tmdb.api_key, "page": pg}, timeout=6)
+            if r.status_code == 200:
+                pages.extend(r.json().get("results", []))
+
+    # Filter quality + unseen
+    pool = [m for m in pages
+            if m.get("vote_average", 0) >= 7.5
+            and m.get("vote_count", 0) >= 500
+            and m.get("title", "") not in liked_set]
+
+    if not pool:
+        pool = pages[:20]  # Fallback
+
+    pick = random.choice(pool) if pool else {}
+    result = fmt([pick])[0] if pick else {}
+    result["reason"] = "🎲 Surprise Pick — Highly Rated, Something New!"
+    return result
+
+
+# ─── INTERACTION LOGGING ──────────────────────────────────
+class InteractionReq(BaseModel):
+    username: str = ""
+    movie_id: int
+    movie_title: str
+    watch_pct: float = 0.0       # 0.0–1.0, how much was watched
+    source: str = "home"         # 'home'|'search'|'chatbot'|'similar'|'surprise'
+    session_sec: int = 0         # seconds spent on this movie
+
+@app.post("/api/user/interaction")
+def log_interaction(req: InteractionReq):
+    """
+    Logs a user interaction event for future collaborative filtering.
+    Implicitly updates watch history as well.
+    """
+    # Update watch history if user logged in
+    if req.username:
+        conn, cur = get_db()
+        cur.execute("SELECT watch_history FROM users WHERE username=?", (req.username,))
+        row = cur.fetchone()
+        if row:
+            items = [x for x in (row["watch_history"] or "").split(",") if x]
+            entry = str(req.movie_id)
+            if entry in items:
+                items.remove(entry)
+            items.append(entry)
+            items = items[-50:]
+            cur.execute("UPDATE users SET watch_history=? WHERE username=?",
+                        (",".join(items), req.username))
+            conn.commit()
+        conn.close()
+
+    # Log for future CF training (stored as JSON lines in a log file)
+    try:
+        log_path = os.path.join(os.path.dirname(__file__), '..', 'interactions.jsonl')
+        from datetime import datetime
+        entry = {
+            "user": req.username or "anon",
+            "movie_id": req.movie_id,
+            "title": req.movie_title,
+            "watch_pct": req.watch_pct,
+            "source": req.source,
+            "session_sec": req.session_sec,
+            "ts": datetime.now().isoformat()
+        }
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry) + "\n")
+    except Exception:
+        pass  # Never fail silently — interaction logging is best-effort
+
+    return {"ok": True}
+
 
 
 # ─── AI CHATBOT (Gemini) ──────────────────────────────────

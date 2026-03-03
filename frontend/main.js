@@ -230,8 +230,9 @@ async function renderHome(app) {
   }
 
   if (user) {
+    const activeMood = localStorage.getItem('cm_last_mood') || '';
     const [hybridData, forYouData] = await Promise.all([
-      api(`/recommendations/hybrid?username=${user.username}&industry=${ind}&count=20`).catch(() => null),
+      api(`/recommendations/hybrid?username=${user.username}&industry=${ind}&count=20&mood=${activeMood}&explain=true`).catch(() => null),
       api(`/recommendations/for-you?username=${user.username}&industry=${ind}&count=20`).catch(() => null),
     ]);
     if (hybridData?.length) {
@@ -241,7 +242,7 @@ async function renderHome(app) {
             <span class="hybrid-icon">🧠</span>
             <div>
               <div class="hybrid-title">AI Picks For ${user.username}</div>
-              <div class="hybrid-sub">Trending · Taste · Similarity · Recency combined</div>
+              <div class="hybrid-sub">Trending · Taste · Similarity · Recency · Genre-balanced</div>
             </div>
           </div>
         </div>
@@ -288,6 +289,7 @@ async function renderHome(app) {
         <button class="tf-btn tf-active" id="tf-any" onclick="setTimeFilter('any')">📺 Any</button>
         <button class="tf-btn" id="tf-short" onclick="setTimeFilter('short')">⚡ Under 90 min</button>
         <button class="tf-btn" id="tf-normal" onclick="setTimeFilter('normal')">🎬 Under 2 hrs</button>
+        <button class="tf-btn surprise-btn" onclick="doSurpriseMe()" title="Pick a random high-quality movie for you">🎲 Surprise Me!</button>
       </div>
     </div>
     <div id="mood-results"></div>
@@ -472,6 +474,27 @@ window.setTimeFilter = function (filter) {
   if (btn) btn.classList.add('tf-active');
   // Re-run mood if one is selected
   if (currentMood) pickMood(currentMood);
+};
+
+// ── SURPRISE ME ────────────────────────────────
+window.doSurpriseMe = async function () {
+  const btn = document.querySelector('.surprise-btn');
+  if (btn) { btn.textContent = '⏳ Picking...'; btn.disabled = true; }
+  try {
+    const ind = cinemaMode === 'indian' ? industry : 'all';
+    const uname = user?.username || '';
+    const movie = await api(`/recommendations/surprise?username=${uname}&industry=${ind}`);
+    if (movie?.title) {
+      toast(`🎲 Surprise: ${movie.title}`, 'ok');
+      openModal(movie.id || 0, movie.title);
+    } else {
+      toast('Could not find a surprise pick — try again!', 'info');
+    }
+  } catch (e) {
+    toast('Surprise pick failed', 'err');
+  } finally {
+    if (btn) { btn.textContent = '🎲 Surprise Me!'; btn.disabled = false; }
+  }
 };
 
 window.pickMood = async function (mood) {
@@ -1093,9 +1116,11 @@ function tmdbCard(m, i = 0) {
   const poster = m.poster_path || ph(175, 263);
   const rating = m.vote_average?.toFixed(1) || 'N/A';
   const d = Math.min(i * 0.04, 0.5);
+  const reason = m.reason || '';
   return `
     <div class="mc" style="animation-delay:${d}s" onclick="openModal(${m.id || 0},'${esc(m.title)}')">
       <img class="mc-poster" src="${poster}" loading="lazy" alt="${m.title}">
+      ${reason ? `<div class="mc-reason-tag">${reason}</div>` : ''}
       <div class="mc-overlay">
         <div class="mc-name">${m.title}</div>
         <div class="mc-meta-row"><span class="mc-rating">★${rating}</span><span class="mc-year">${m.release_date?.slice(0, 4) || ''}</span></div>

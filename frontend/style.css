@@ -2701,3 +2701,71 @@ button {
     background: linear-gradient(135deg, rgba(248, 194, 24, .15), rgba(248, 194, 24, .05)) !important;
     border-color: rgba(248, 194, 24, .35) !important;
 }
+
+/* ── MC REASON TAG (Explainability) ─────────────── */
+.mc {
+    position: relative;
+}
+
+.mc-reason-tag {
+    position: absolute;
+    top: 8px;
+    left: 0;
+    right: 0;
+    padding: 4px 8px;
+    font-size: .62rem;
+    font-weight: 700;
+    color: rgba(255, 255, 255, .9);
+    background: linear-gradient(90deg, rgba(0, 0, 0, .75) 0%, rgba(0, 0, 0, .5) 100%);
+    backdrop-filter: blur(4px);
+    text-align: center;
+    letter-spacing: .3px;
+    pointer-events: none;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    z-index: 4;
+    opacity: 0;
+    transform: translateY(-6px);
+    transition: opacity .22s ease, transform .22s ease;
+}
+
+.mc:hover .mc-reason-tag {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+/* ── SURPRISE ME BUTTON ─────────────────────────── */
+.surprise-btn {
+    background: linear-gradient(135deg, #7B2FFF 0%, #E50914 100%) !important;
+    color: #fff !important;
+    border: none !important;
+    font-weight: 800 !important;
+    letter-spacing: .3px;
+    margin-left: 8px;
+    animation: surprisePulse 3s ease-in-out infinite;
+}
+
+.surprise-btn:hover {
+    transform: scale(1.06) !important;
+    box-shadow: 0 0 20px rgba(123, 47, 255, .55) !important;
+    animation: none !important;
+}
+
+.surprise-btn:disabled {
+    opacity: .7 !important;
+    animation: none !important;
+    cursor: wait !important;
+}
+
+@keyframes surprisePulse {
+
+    0%,
+    100% {
+        box-shadow: 0 0 8px rgba(229, 9, 20, .3);
+    }
+
+    50% {
+        box-shadow: 0 0 18px rgba(123, 47, 255, .5);
+    }
+}
