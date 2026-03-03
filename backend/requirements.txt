@@ -8,3 +8,9 @@ numpy
 python-multipart
 google-generativeai
 firebase-admin
+# ML — Recommendation Engine
+scikit-learn
+scipy
+sentence-transformers
+# Database — PostgreSQL (optional, falls back to SQLite)
+psycopg2-binary

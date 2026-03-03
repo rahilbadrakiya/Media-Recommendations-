@@ -2,10 +2,12 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import json, os, sqlite3, hashlib, requests, random
+import json, os, sqlite3, hashlib, requests, random, numpy as np
 from Classifier import KNearestNeighbours
 from tmdb_utils import TMDBClient
 from dotenv import load_dotenv
+from cache import cache, TTL
+import cf_engine  # SVD collaborative filtering
 
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '..', '.env'))
 
@@ -38,6 +40,46 @@ with open(os.path.join(DATA_DIR, "movie_titles.json"), encoding="utf-8") as f:
     movie_titles = json.load(f)
 
 tmdb = TMDBClient()
+
+# ── SentenceTransformer Embeddings (optional — run embed_movies.py first) ─────
+_embeddings: np.ndarray | None = None
+_embed_index: list | None = None  # list of movie titles in embedding row order
+
+def _load_embeddings():
+    global _embeddings, _embed_index
+    emb_path = os.path.join(DATA_DIR, "movie_embeddings.npy")
+    idx_path  = os.path.join(DATA_DIR, "movie_embed_index.json")
+    if os.path.exists(emb_path) and os.path.exists(idx_path):
+        try:
+            _embeddings  = np.load(emb_path)        # shape (N, 384), L2-normalized
+            with open(idx_path, encoding="utf-8") as f:
+                _embed_index = json.load(f)
+            print(f"[Embeddings] Loaded {_embeddings.shape[0]} movie vectors")
+        except Exception as e:
+            print(f"[Embeddings] Failed to load: {e}")
+    else:
+        print("[Embeddings] Not found — run: python backend/embed_movies.py")
+
+_load_embeddings()
+
+def semantic_similar(title: str, top_n: int = 10) -> list:
+    """
+    Return top_n movie titles most semantically similar to `title`
+    using pre-computed SentenceTransformer embeddings (cosine similarity).
+    Falls back to empty list if embeddings not available.
+    """
+    if _embeddings is None or _embed_index is None:
+        return []
+    if title not in _embed_index:
+        return []
+    idx = _embed_index.index(title)
+    query_vec = _embeddings[idx]                                # (384,)
+    sims = _embeddings @ query_vec                              # (N,) dot product = cosine since L2-normalized
+    top_indices = np.argsort(-sims)[1:top_n + 1]               # skip self (index 0)
+    return [{"title": _embed_index[i], "similarity": float(sims[i])} for i in top_indices]
+
+# ── Database — SQLite (default) or PostgreSQL (set DATABASE_URL) ──────────────
+DATABASE_URL = os.environ.get("DATABASE_URL", "")  # e.g. postgresql://user:pw@host:5432/cinemate
 
 GENRES = ['Action','Adventure','Animation','Biography','Comedy','Crime','Documentary','Drama',
           'Family','Fantasy','Film-Noir','Game-Show','History','Horror','Music','Musical',
@@ -226,10 +268,17 @@ def fmt(results):
              "release_date": m.get("release_date",""), "vote_average": m.get("vote_average",0)} for m in results]
 
 @app.get("/api/movies/trending")
-def trending(): return fmt(tmdb.get_trending())
+def trending():
+    return cache.get_or_set("trending:global", lambda: fmt(tmdb.get_trending()), TTL["trending"])
 
 @app.get("/api/movies/now-playing")
-def now_playing(): return fmt(tmdb.get_now_playing())
+def now_playing():
+    return cache.get_or_set("now_playing:global", lambda: fmt(tmdb.get_now_playing()), TTL["now_playing"])
+
+@app.get("/api/cache/stats")
+def cache_stats():
+    """Monitor cache health — useful for debugging."""
+    return {"cache": cache.stats(), "cf_ready": cf_engine.is_ready(), "embeddings_ready": _embeddings is not None}
 
 @app.get("/api/movies/upcoming")
 def upcoming():
@@ -795,9 +844,162 @@ def rate_movie(req: RateReq):
     conn.commit(); conn.close()
     return {"ratings": ratings}
 
+@app.get("/api/user/taste-profile")
+def user_taste_profile(username: str):
+    """
+    Builds the emotional taste profile for the frontend Radar Chart.
+    Analyzes liked and highly-rated movies to compute mood affinity.
+    """
+    conn, cur = get_db()
+    cur.execute("SELECT fav_genres, liked_movies, ratings FROM users WHERE username=?", (username,))
+    row = cur.fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(404, "User not found.")
+
+    liked = [x for x in (row["liked_movies"] or "").split(",") if x]
+    ratings = json.loads(row["ratings"]) if row["ratings"] else {}
+    fav_genres = [x for x in (row["fav_genres"] or "").split(",") if x]
+
+    # Combine into a high-signal pool of titles
+    loved_titles = list(set(liked + [t for t, r in ratings.items() if float(r) >= 4.0]))
+
+    # Analyze genres of loved movies
+    genre_counts = {g: 0 for g in GENRES}
+    titles_list = [t[0] for t in movie_titles]
+    for title in loved_titles:
+        if title in titles_list:
+            idx = titles_list.index(title)
+            movie_vec = movie_data[idx]
+            for i, g in enumerate(GENRES):
+                if movie_vec[i] == 1:
+                    genre_counts[g] += 1
+
+    # Add explicit favorite genres 
+    for g in fav_genres:
+        if g in genre_counts:
+            genre_counts[g] += 5  # high weight for explicit preference
+
+    # Map to the 8 Core Moods
+    mood_scores = {mid: 0.0 for mid in MOOD_META.keys()}
+    total_score = 0
+    for mood_id, meta in MOOD_META.items():
+        score = sum(genre_counts.get(g, 0) for g in meta["genres"])
+        mood_scores[mood_id] = score
+        total_score += score
+
+    labels = []
+    data = []
+    
+    # Normalize 0 to 100
+    for mood_id, score in mood_scores.items():
+        meta = MOOD_META[mood_id]
+        labels.append(f"{meta['emoji']} {meta['label']}")
+        val = int((score / total_score * 100) if total_score > 0 else 0)
+        data.append(val)
+
+    # Empty state handling
+    if total_score == 0:
+        data = [12] * len(labels)  # Flat even circle
+
+    return {
+        "labels": labels,
+        "data": data,
+        "moods_analyzed": len(loved_titles) > 0,
+        "total_loved": len(loved_titles)
+    }
+
 # (Analytics removed as requested)
 
-# ─── WATCH HISTORY ────────────────────────────────────────
+# ─── SEMANTIC SIMILAR (SentenceTransformer embeddings) ────
+@app.get("/api/recommendations/semantic-similar")
+def semantic_similar_endpoint(title: str, count: int = 10):
+    """
+    Content-based similarity using SentenceTransformer semantic embeddings.
+    Much richer than pure genre-KNN — understands context, themes, vibe.
+    Falls back to KNN if embeddings not yet computed.
+    """
+    ck = f"sem_sim:{title}:{count}"
+    cached = cache.get(ck)
+    if cached:
+        return cached
+
+    # Try semantic embeddings first
+    sem = semantic_similar(title, top_n=count)
+    if sem:
+        result = [{"title": s["title"], "similarity_pct": round(s["similarity"] * 100, 1)} for s in sem]
+        cache.set(ck, result, TTL["content_similar"])
+        return result
+
+    # Fallback: KNN
+    titles_list = [t[0] for t in movie_titles]
+    if title not in titles_list:
+        raise HTTPException(404, "Movie not found in dataset.")
+    idx = titles_list.index(title)
+    knn = knn_recommend(movie_data[idx], count + 1)[1:]   # skip self
+    result = [{"title": m["title"], "similarity_pct": None} for m in knn]
+    cache.set(ck, result, TTL["content_similar"])
+    return result
+
+
+# ─── COLLABORATIVE FILTERING ENDPOINT ─────────────────────
+@app.get("/api/recommendations/collaborative")
+def collaborative_recommend(username: str, count: int = 20):
+    """
+    SVD Collaborative Filtering — predicts movies based on what similar
+    users have watched. Requires interaction data (interactions.jsonl).
+    Falls back to hybrid recommendations when model not ready.
+    """
+    ck = f"cf:{username}:{count}"
+    cached = cache.get(ck)
+    if cached:
+        return cached
+
+    if not cf_engine.is_ready():
+        # Fallback to hybrid
+        return hybrid_recommend(username=username, count=count)
+
+    preds = cf_engine.predict_for_user(username, top_n=count * 2)
+    if not preds:
+        return hybrid_recommend(username=username, count=count)
+
+    # Fetch TMDB details for each predicted movie_id in parallel
+    results = []
+    def fetch_movie(mid_score):
+        mid, score = mid_score
+        r = requests.get(f"{tmdb.base_url}/movie/{mid}",
+                         params={"api_key": tmdb.api_key}, timeout=5)
+        if r.status_code == 200:
+            m = r.json()
+            return {
+                "id": m.get("id"),
+                "title": m.get("title", ""),
+                "poster_path": f"https://image.tmdb.org/t/p/w500{m['poster_path']}" if m.get("poster_path") else None,
+                "vote_average": m.get("vote_average", 0),
+                "release_date": m.get("release_date", ""),
+                "reason": f"🤝 Users Like You Loved This · Score {score:.1f}"
+            }
+        return None
+
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        futures = [pool.submit(fetch_movie, ps) for ps in preds[:count + 5]]
+        for f in futures:
+            res = f.result()
+            if res:
+                results.append(res)
+
+    result = results[:count]
+    cache.set(ck, result, TTL["cf_scores"])
+    return result
+
+
+# ─── RETRAIN CF (admin) ───────────────────────────────────
+@app.post("/api/admin/retrain-cf")
+def retrain_cf():
+    """Trigger SVD retraining — call after significant interaction accumulation."""
+    cf_engine.retrain_if_needed()
+    return {"ok": True, "cf_ready": cf_engine.is_ready()}
+
 @app.post("/api/user/history")
 def add_watch_history(req: WatchHistoryReq):
     conn, cur = get_db()
