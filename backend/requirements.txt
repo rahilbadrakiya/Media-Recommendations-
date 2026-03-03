@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+python-dotenv
+requests
+beautifulsoup4
+pandas
+numpy
+python-multipart
+google-generativeai
+firebase-admin

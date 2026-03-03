@@ -1,110 +1,211 @@
-# CineMate - Intelligent Movie Recommendation System
+# 🎬 CineMate Ultra — AI-Powered Movie Recommendation Engine
 
-[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://share.streamlit.io/rahilbadrakiya/Media-Recommendations-)
+> A Netflix-inspired movie discovery platform combining a **Hybrid Recommendation Algorithm**, **AI Chatbot (Gemini)**, and **real-time TMDB data** for both Hollywood and Indian cinema.
 
-**CineMate** is a full-stack movie recommendation application that provides personalized suggestions using machine learning. It features a modern, Netflix-inspired dark UI and a custom-built K-Nearest Neighbors (KNN) algorithm to find movies similar to your favorites.
-
-The application allows users to browse trending content, get recommendations based on specific movies or genres, and maintain a personal profile of liked movies.
-
-## Key Features
-
-### 🧠 Intelligent Recommendation Engine
-*   **KNN Algorithm**: Uses a custom K-Nearest Neighbors implementation (Euclidean distance) to identify movies with similar feature vectors (genres, ratings).
-*   **Dual-Mode Discovery**:
-    *   **Movie-Based**: Select a movie you love, and the engine finds geographically close vectors in the feature space.
-    *   **Genre-Based**: Select multiple genres and a minimum IMDb rating to generate a custom playlist.
-*   **Dynamic "Load More"**: content is fetched in batches (default 60), allowing endless scrolling without page reloads.
-
-### 🎨 Modern User Experience
-*   **Netflix-Style Dark Theme**: Custom CSS implementation with glassmorphism, hover scaling effects, and a cinematographic color palette (Black/Red/White).
-*   **Live Poster Fetching**: Scrapes IMDb meta tags in real-time to display the most up-to-date high-quality movie posters.
-*   **Responsive Grid Layout**: Adaptive movie cards that look great on desktop and larger screens.
-
-### 👤 User Accounts & Profile
-*   **Secure Authentication**: Registration and Login system with SHA-256 password hashing.
-*   **Favorites System**: Interactive "Heart" icon on every movie card.
-*   **Personalized Profile**: "Liked" movies are saved to a persistent SQLite database and displayed in the user's profile.
-*   **Guest Handling**: Unauthenticated users are gracefully redirected to login when attempting to interact with features.
+![Tech Stack](https://img.shields.io/badge/FastAPI-009688?style=flat&logo=fastapi&logoColor=white)
+![Vite](https://img.shields.io/badge/Vite-646CFF?style=flat&logo=vite&logoColor=white)
+![TMDB](https://img.shields.io/badge/TMDB-01B4E4?style=flat&logo=themoviedatabase&logoColor=white)
+![Gemini](https://img.shields.io/badge/Gemini_AI-4285F4?style=flat&logo=google&logoColor=white)
+![Firebase](https://img.shields.io/badge/Firebase-FFCA28?style=flat&logo=firebase&logoColor=black)
 
 ---
 
-## Technical Architecture
+## ✨ Features
 
-### Tech Stack
-*   **Frontend**: Streamlit (Python-based web framework)
-*   **Backend Logic**: Python 3.9+
-*   **Machine Learning**: Scikit-learn, NumPy, Custom KNN Class
-*   **Data Processing**: Pandas
-*   **Database**: SQLite (UserInfo table with JSON-serialized lists for likes/genres)
-*   **Web Scraping**: BeautifulSoup4, Requests (for fetching poster images)
-
-### Project Structure
+### 🧠 Netflix-Level Hybrid Recommendation Engine
+Combines 5 signals into one score:
 ```
-├── App.py                # Main application controller & UI rendering
-├── Classifier.py         # Custom KNN Algorithm implementation
-├── Data/
-│   ├── movie_data.json   # Pre-processed feature vectors for the model
-│   └── movie_titles.json # Metadata (ID, Title, IMDb Link)
-├── assets/
-│   └── custom.css        # Custom CSS for styling components
-├── users.db              # Local database for user credentials & history
-└── requirements.txt      # Python dependencies
+Final Score = 0.30 × User Preference
+            + 0.20 × Trending Score
+            + 0.20 × Similarity Score
+            + 0.15 × Recency Score
+            + 0.15 × Popularity Score
 ```
 
----
+### 🤖 AI Chatbot (Gemini-Powered)
+- Natural language prompts: *"dark thriller like Se7en but modern"*
+- Understands mood, vibe, genre, era, and runtime preferences
+- Renders movie cards directly inside the chat panel
+- Falls back to keyword-based NLP if no API key is set
 
-## Installation & Setup
+### 🎬 Smart Recommendation Sections
+| Section | Description |
+|---|---|
+| 🧠 AI Picks For You | Hybrid score — personalized for logged-in users |
+| 🔥 Just Released For You | Last 60 days, filtered by your genre preferences |
+| 🎞️ Old Classics Like Trending | Timeless movies matching current trending vibes |
+| 🍿 Because You Loved | Multi-movie BYW using all liked + rated movies |
+| 📅 Contextual / Seasonal | Festival/seasonal picks based on today's date |
+| 🎭 Mood Selector | 8 moods with persistent last-selection |
+| ⏱️ Time Filter | Any / Under 90 min / Under 2 hrs |
 
-1.  **Clone the Repository**
-    ```bash
-    git clone https://github.com/rahilbadrakiya/Media-Recommendations-.git
-    cd Media-Recommendations-
-    ```
+### 🇮🇳 Indian Cinema Support
+- Bollywood, Tollywood, Kollywood, Mollywood, Sandalwood
+- All recommendation features work for Indian industry too
+- Separate trending, now-playing, upcoming, and top-rated
 
-2.  **Create a Virtual Environment** (Recommended)
-    ```bash
-    python -m venv venv
-    # Windows
-    venv\Scripts\activate
-    # Mac/Linux
-    source venv/bin/activate
-    ```
-
-3.  **Install Dependencies**
-    ```bash
-    pip install -r requirements.txt
-    ```
-
-4.  **Run the Application**
-    ```bash
-    streamlit run App.py
-    ```
-
-The app will launch in your default browser at `http://localhost:8501`.
+### 👤 User Features
+- Firebase Auth (Email + Google Sign-In)
+- Like, Watchlist, and Star Rating (1–5)
+- Watch history tracking (powers hybrid recommendations)
+- Personalized genre preferences at registration
 
 ---
 
-## Future Roadmap
+## 🛠️ Tech Stack
 
-*   **Hybrid Filtering**: Implement Content-Based Filtering to solve the "cold start" problem for new movies.
-*   **API Integration**: Migrate from scraping to the TMDB API for faster image loading, trailers, and cast details.
-*   **Social Features**: Allow users to share their "Liked" lists with friends.
-*   **Cloud Deployment**: Migrate the SQLite database to PostgreSQL for persistent hosting on platforms like Streamlit Cloud or Render.
-
----
-
-## Contributing
-
-Contributions are welcome!
-
-1.  Fork the repository.
-2.  Create your feature branch (`git checkout -b feature/AmazingFeature`).
-3.  Commit your changes (`git commit -m 'Add some AmazingFeature'`).
-4.  Push to the branch (`git push origin feature/AmazingFeature`).
-5.  Open a Pull Request.
+| Layer | Technology |
+|---|---|
+| **Frontend** | Vanilla JS, Vite, CSS3 |
+| **Backend** | Python, FastAPI |
+| **Recommendation ML** | Custom KNN classifier |
+| **Movie Data** | TMDB API |
+| **AI Chatbot** | Google Gemini 2.0 Flash |
+| **Auth** | Firebase Authentication |
+| **Database** | SQLite (local user data) |
 
 ---
 
-## License
+## 🚀 Getting Started
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+### Prerequisites
+- Python 3.10+
+- Node.js 18+
+- TMDB API key (free at [themoviedb.org](https://www.themoviedb.org/settings/api))
+- Gemini API key (free at [aistudio.google.com](https://aistudio.google.com/app/apikey))
+
+### 1. Clone the repo
+```bash
+git clone https://github.com/rahilbadrakiya/Media-Recommendations-.git
+cd Media-Recommendations-
+```
+
+### 2. Setup environment variables
+```bash
+cp .env.example .env
+# Edit .env and add your TMDB_API_KEY and GEMINI_API_KEY
+```
+
+### 3. Install backend dependencies
+```bash
+python -m venv .venv
+.venv\Scripts\activate        # Windows
+# source .venv/bin/activate   # macOS/Linux
+pip install -r backend/requirements.txt
+```
+
+### 4. Install frontend dependencies
+```bash
+cd frontend
+npm install
+cd ..
+```
+
+### 5. Run the app
+```bash
+# Windows (double-click or run):
+start.bat
+
+# Manual:
+# Terminal 1 — Backend
+cd backend && python main.py
+
+# Terminal 2 — Frontend
+cd frontend && npm run dev
+```
+
+Open **http://localhost:5173** in your browser.
+
+---
+
+## 📁 Project Structure
+
+```
+CineMate/
+├── backend/
+│   ├── main.py              # FastAPI app — all API endpoints
+│   ├── Classifier.py        # KNN recommendation model
+│   ├── tmdb_utils.py        # TMDB API client
+│   ├── requirements.txt     # Python dependencies
+│   └── Data/
+│       ├── movie_data.json  # Feature vectors for KNN
+│       └── movie_titles.json
+│
+├── frontend/
+│   ├── index.html           # Main HTML + chatbot HTML
+│   ├── main.js              # App logic, routing, all UI
+│   ├── style.css            # Complete design system
+│   ├── firebase.js          # Firebase auth
+│   └── vite.config.js
+│
+├── .env.example             # Template for env variables
+├── .gitignore
+├── start.bat                # One-click start (Windows)
+├── Movie_Data_Processing.ipynb  # Data preprocessing notebook
+└── README.md
+```
+
+---
+
+## 🔑 API Endpoints
+
+### Recommendations
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/api/recommendations/hybrid` | Netflix hybrid score engine |
+| GET | `/api/recommendations/for-you` | Multi-movie BYW |
+| GET | `/api/recommendations/just-released` | Last 60 days + genre filter |
+| GET | `/api/recommendations/classics-like-trending` | Old classics matching trending |
+| POST | `/api/recommendations/movie` | KNN movie-based |
+| POST | `/api/recommendations/genre` | KNN genre-based |
+| POST | `/api/recommendations/mood` | KNN mood-based |
+
+### AI Chatbot
+| Method | Endpoint | Description |
+|---|---|---|
+| POST | `/api/chat` | Gemini AI natural language recommendations |
+
+### Movies (TMDB)
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/api/movies/trending` | Hollywood trending |
+| GET | `/api/movies/now-playing` | Now in theatres |
+| GET | `/api/movies/upcoming` | Coming soon |
+| GET | `/api/movies/contextual` | Seasonal/festival picks |
+| GET | `/api/movies/indian-trending` | Indian cinema trending |
+| GET | `/api/movies/{id}/details` | Trailers, cast, similar |
+| GET | `/api/movies/search` | Search movies |
+
+### User
+| Method | Endpoint | Description |
+|---|---|---|
+| POST | `/api/auth/register` | Create account |
+| POST | `/api/auth/login` | Email/password login |
+| POST | `/api/auth/firebase` | Firebase auth sync |
+| POST | `/api/user/likes` | Toggle like |
+| POST | `/api/user/watchlist` | Toggle watchlist |
+| POST | `/api/user/rate` | Rate a movie (1–5) |
+| POST | `/api/user/history` | Track watch history |
+
+---
+
+## 📸 Screenshots
+
+> Hero section, mood selector, AI chatbot, and movie cards
+
+_(Add your screenshots to the `Screenshots/` folder and link them here)_
+
+---
+
+## 📄 License
+
+MIT License — see [LICENSE](LICENSE)
+
+---
+
+## 🙏 Credits
+
+- Movie data: [TMDB API](https://www.themoviedb.org/)
+- AI: [Google Gemini](https://deepmind.google/technologies/gemini/)
+- Auth: [Firebase](https://firebase.google.com/)
+- Design inspired by Netflix & modern streaming UIs
