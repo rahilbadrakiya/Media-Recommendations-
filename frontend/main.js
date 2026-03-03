@@ -1131,7 +1131,7 @@ window.switchTab = async function (tab) {
               titleFont: { size: 14, family: 'Outfit' },
               bodyFont: { size: 14, family: 'Outfit' },
               padding: 12,
-              callbacks: { label: (ctx) => \` \${ctx.raw}% Affinity\` }
+              callbacks: { label: (ctx) => ` ${ctx.raw}% Affinity` }
             }
           }
         }
@@ -1146,7 +1146,7 @@ window.toggleLike = async function (title) {
   try {
     const res = await api('/user/likes', 'POST', { username: user.username, movie_title: title });
     user.liked_movies = res.liked_movies; localStorage.setItem('cm_user', JSON.stringify(user));
-    toast(res.is_liked ? `❤️ Liked: ${ title }` : `Removed from likes`, 'ok');
+    toast(res.is_liked ? `❤️ Liked: ${title}` : `Removed from likes`, 'ok');
     // Re-open modal to refresh buttons
     if (modalMovieId) { const cur = document.getElementById('modal-body'); if (cur) openModal(modalMovieId, title); }
   } catch (e) { toast('Failed', 'err'); }
@@ -1167,9 +1167,9 @@ window.rateMovie = async function (title, rating, id) {
     const res = await api('/user/rate', 'POST', { username: user.username, movie_title: title, rating });
     user.ratings = res.ratings; localStorage.setItem('cm_user', JSON.stringify(user));
     // Update stars in modal
-    const row = document.getElementById(`star - row - ${ id }`);
+    const row = document.getElementById(`star - row - ${id}`);
     if (row) row.querySelectorAll('.star').forEach(s => s.classList.toggle('lit', parseInt(s.dataset.val) <= rating));
-    toast(`Rated ${ rating }★`, 'ok');
+    toast(`Rated ${rating}★`, 'ok');
   } catch (e) { toast('Rating failed', 'err'); }
 };
 
@@ -1224,8 +1224,8 @@ async function batchLoadPosters(titles, container) {
   try {
     const batchMap = await api('/movies/batch-search', 'POST', { titles });
     titles.forEach((title, i) => {
-      const safeId = `lc - ${ i } - ${ title.slice(0, 5).replace(/[\s'"]/g, '_') }`;
-      const img = container.querySelector(`#${ safeId }`);
+      const safeId = `lc - ${i} - ${title.slice(0, 5).replace(/[\s'"]/g, '_')}`;
+      const img = container.querySelector(`#${safeId}`);
       const data = batchMap[title];
       if (img && data?.poster_path) img.src = data.poster_path;
     });
@@ -1236,136 +1236,136 @@ async function batchLoadPosters(titles, container) {
 async function api(endpoint, method = 'GET', body = null) {
   const opts = { method, headers: { 'Content-Type': 'application/json' } };
   if (body) opts.body = JSON.stringify(body);
-  const res = await fetch(`${ API }${ endpoint }`, opts);
+  const res = await fetch(`${API}${endpoint}`, opts);
   if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || 'API Error'); }
   return res.json();
 }
 
 function esc(s = '') { return String(s).replace(/'/g, "\\'").replace(/"/g, '&quot;'); }
 function ph(w, h) { return `https://via.placeholder.com/${w}x${h}/16162a/505070?text=...`; }
-        function skelGrid(n) { return Array(n).fill('<div class="skel" style="aspect-ratio:2/3;border-radius:16px"></div>').join(''); }
+function skelGrid(n) { return Array(n).fill('<div class="skel" style="aspect-ratio:2/3;border-radius:16px"></div>').join(''); }
 
 function toast(msg, type = 'ok') {
-          const c = document.getElementById('toasts');
-          const t = document.createElement('div');
-          t.className = `toast ${type}`; t.textContent = msg;
-          c.appendChild(t); setTimeout(() => t.remove(), 3500);
-        }
+  const c = document.getElementById('toasts');
+  const t = document.createElement('div');
+  t.className = `toast ${type}`; t.textContent = msg;
+  c.appendChild(t); setTimeout(() => t.remove(), 3500);
+}
 
 // ── AI CHATBOT ─────────────────────────────────────
 let chatOpen = false;
-      let chatHistory = [];
-      let chatIndustry = 'all';
+let chatHistory = [];
+let chatIndustry = 'all';
 
-      window.toggleChat = function () {
-        chatOpen = !chatOpen;
-        const panel = document.getElementById('chat-panel');
-        const bubble = document.getElementById('chat-bubble');
-        if (chatOpen) {
-          panel.classList.remove('hidden');
-          panel.classList.add('chat-panel-open');
-          bubble.classList.add('bubble-active');
-          document.getElementById('chat-input')?.focus();
-          chatIndustry = cinemaMode === 'indian' ? (industry || 'all_indian') : 'all';
-        } else {
-          panel.classList.remove('chat-panel-open');
-          panel.classList.add('hidden');
-          bubble.classList.remove('bubble-active');
-        }
-      };
+window.toggleChat = function () {
+  chatOpen = !chatOpen;
+  const panel = document.getElementById('chat-panel');
+  const bubble = document.getElementById('chat-bubble');
+  if (chatOpen) {
+    panel.classList.remove('hidden');
+    panel.classList.add('chat-panel-open');
+    bubble.classList.add('bubble-active');
+    document.getElementById('chat-input')?.focus();
+    chatIndustry = cinemaMode === 'indian' ? (industry || 'all_indian') : 'all';
+  } else {
+    panel.classList.remove('chat-panel-open');
+    panel.classList.add('hidden');
+    bubble.classList.remove('bubble-active');
+  }
+};
 
-      window.sendChatSuggestion = function (text) {
-        const input = document.getElementById('chat-input');
-        if (input) { input.value = text; sendChatMessage(); }
-      };
+window.sendChatSuggestion = function (text) {
+  const input = document.getElementById('chat-input');
+  if (input) { input.value = text; sendChatMessage(); }
+};
 
-      window.sendChatMessage = async function () {
-        const input = document.getElementById('chat-input');
-        const msg = input?.value?.trim();
-        if (!msg) return;
-        input.value = '';
+window.sendChatMessage = async function () {
+  const input = document.getElementById('chat-input');
+  const msg = input?.value?.trim();
+  if (!msg) return;
+  input.value = '';
 
-        // Hide suggestions after first message
-        const sugg = document.getElementById('chat-suggestions');
-        if (sugg) sugg.style.display = 'none';
+  // Hide suggestions after first message
+  const sugg = document.getElementById('chat-suggestions');
+  if (sugg) sugg.style.display = 'none';
 
-        // Append user message
-        appendChatMsg(msg, 'user');
-        chatHistory.push({ role: 'user', content: msg });
+  // Append user message
+  appendChatMsg(msg, 'user');
+  chatHistory.push({ role: 'user', content: msg });
 
-        // Show typing indicator
-        const typingId = 'chat-typing-' + Date.now();
-        const msgs = document.getElementById('chat-messages');
-        msgs.insertAdjacentHTML('beforeend', `<div id="${typingId}" class="chat-msg bot"><div class="chat-typing"><span></span><span></span><span></span></div></div>`);
-        msgs.scrollTop = msgs.scrollHeight;
+  // Show typing indicator
+  const typingId = 'chat-typing-' + Date.now();
+  const msgs = document.getElementById('chat-messages');
+  msgs.insertAdjacentHTML('beforeend', `<div id="${typingId}" class="chat-msg bot"><div class="chat-typing"><span></span><span></span><span></span></div></div>`);
+  msgs.scrollTop = msgs.scrollHeight;
 
-        // Disable send button
-        const btn = document.getElementById('chat-send-btn');
-        if (btn) btn.disabled = true;
+  // Disable send button
+  const btn = document.getElementById('chat-send-btn');
+  if (btn) btn.disabled = true;
 
-        try {
-          const res = await api('/chat', 'POST', {
-            message: msg,
-            username: user?.username || '',
-            industry: chatIndustry,
-            history: chatHistory.slice(-8)
-          });
+  try {
+    const res = await api('/chat', 'POST', {
+      message: msg,
+      username: user?.username || '',
+      industry: chatIndustry,
+      history: chatHistory.slice(-8)
+    });
 
-          // Remove typing indicator
-          document.getElementById(typingId)?.remove();
+    // Remove typing indicator
+    document.getElementById(typingId)?.remove();
 
-          const reply = res.reply || 'Here are some great picks for you!';
-          appendChatMsg(reply, 'bot');
-          chatHistory.push({ role: 'assistant', content: reply });
+    const reply = res.reply || 'Here are some great picks for you!';
+    appendChatMsg(reply, 'bot');
+    chatHistory.push({ role: 'assistant', content: reply });
 
-          // Render movie cards inline in chat
-          if (res.movies?.length) {
-            const movieHtml = `<div class="chat-movies">${res.movies.slice(0, 6).map(m => chatMovieCard(m)).join('')}</div>`;
-            const msgWrap = document.createElement('div');
-            msgWrap.className = 'chat-msg bot chat-movies-wrap';
-            msgWrap.innerHTML = movieHtml;
-            document.getElementById('chat-messages').appendChild(msgWrap);
-            msgs.scrollTop = msgs.scrollHeight;
-          }
-        } catch (e) {
-          document.getElementById(typingId)?.remove();
-          appendChatMsg('Sorry, I had trouble connecting. Please try again! 🙏', 'bot');
-        } finally {
-          if (btn) btn.disabled = false;
-          msgs.scrollTop = msgs.scrollHeight;
-        }
-      };
+    // Render movie cards inline in chat
+    if (res.movies?.length) {
+      const movieHtml = `<div class="chat-movies">${res.movies.slice(0, 6).map(m => chatMovieCard(m)).join('')}</div>`;
+      const msgWrap = document.createElement('div');
+      msgWrap.className = 'chat-msg bot chat-movies-wrap';
+      msgWrap.innerHTML = movieHtml;
+      document.getElementById('chat-messages').appendChild(msgWrap);
+      msgs.scrollTop = msgs.scrollHeight;
+    }
+  } catch (e) {
+    document.getElementById(typingId)?.remove();
+    appendChatMsg('Sorry, I had trouble connecting. Please try again! 🙏', 'bot');
+  } finally {
+    if (btn) btn.disabled = false;
+    msgs.scrollTop = msgs.scrollHeight;
+  }
+};
 
-      function appendChatMsg(text, role) {
-        const msgs = document.getElementById('chat-messages');
-        if (!msgs) return;
-        const d = document.createElement('div');
-        d.className = `chat-msg ${role}`;
-        d.innerHTML = `<div class="chat-bubble-msg">${text}</div>`;
-        msgs.appendChild(d);
-        msgs.scrollTop = msgs.scrollHeight;
-      }
+function appendChatMsg(text, role) {
+  const msgs = document.getElementById('chat-messages');
+  if (!msgs) return;
+  const d = document.createElement('div');
+  d.className = `chat-msg ${role}`;
+  d.innerHTML = `<div class="chat-bubble-msg">${text}</div>`;
+  msgs.appendChild(d);
+  msgs.scrollTop = msgs.scrollHeight;
+}
 
-      function chatMovieCard(m) {
-        const poster = m.poster_path || m.link || ph(100, 150);
-        const title = m.title || '';
-        const rating = m.vote_average ? `★ ${m.vote_average.toFixed(1)}` : (m.rating ? `★ ${parseFloat(m.rating).toFixed(1)}` : '');
-        const id = m.id || 0;
-        return `
+function chatMovieCard(m) {
+  const poster = m.poster_path || m.link || ph(100, 150);
+  const title = m.title || '';
+  const rating = m.vote_average ? `★ ${m.vote_average.toFixed(1)}` : (m.rating ? `★ ${parseFloat(m.rating).toFixed(1)}` : '');
+  const id = m.id || 0;
+  return `
     <div class="chat-mc" onclick="openModal(${id},'${esc(title)}')">
       <img src="${poster}" alt="${esc(title)}" onerror="this.src='${ph(100, 150)}'">
       <div class="chat-mc-title">${title}</div>
       ${rating ? `<div class="chat-mc-rating">${rating}</div>` : ''}
     </div>`;
-      }
+}
 
-      // Enter key sends message
-      document.getElementById('chat-input')?.addEventListener('keydown', e => {
-        if (e.key === 'Enter') sendChatMessage();
-      });
-      // Defer binding since element may be in static HTML
-      document.addEventListener('DOMContentLoaded', () => {
-        document.getElementById('chat-input')?.addEventListener('keydown', e => {
-          if (e.key === 'Enter') sendChatMessage();
-        });
-      });
+// Enter key sends message
+document.getElementById('chat-input')?.addEventListener('keydown', e => {
+  if (e.key === 'Enter') sendChatMessage();
+});
+// Defer binding since element may be in static HTML
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('chat-input')?.addEventListener('keydown', e => {
+    if (e.key === 'Enter') sendChatMessage();
+  });
+});
