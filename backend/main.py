@@ -409,6 +409,83 @@ def movie_details(movie_id: int):
         "similar": similar
     }
 
+# ── OTT Watch Provider URLs ────────────────────────────────
+# Maps TMDB provider_id → direct search/watch URL template (%s = movie title)
+OTT_LINKS = {
+    8:   ("Netflix",          "https://www.netflix.com/search?q=%s",                        "#E50914"),
+    9:   ("Prime Video",      "https://www.primevideo.com/search/ref=atv_nb_sug?phrase=%s", "#00A8E0"),
+    337: ("Disney+ Hotstar",  "https://www.hotstar.com/in/search?q=%s",                     "#1C3D8B"),
+    122: ("Hotstar",          "https://www.hotstar.com/in/search?q=%s",                     "#1C3D8B"),
+    2:   ("Apple TV+",        "https://tv.apple.com/search?term=%s",                        "#555555"),
+    350: ("Apple TV+",        "https://tv.apple.com/search?term=%s",                        "#555555"),
+    220: ("JioCinema",        "https://www.jiocinema.com/search/%s",                        "#0075FF"),
+    232: ("ZEE5",             "https://www.zee5.com/search?q=%s",                           "#8B2FC9"),
+    237: ("SonyLIV",          "https://www.sonyliv.com/search/%s",                          "#FF4B4B"),
+    190: ("SonyLIV",          "https://www.sonyliv.com/search/%s",                          "#FF4B4B"),
+    531: ("Paramount+",       "https://www.paramountplus.com/search/%s",                    "#0064FF"),
+    384: ("HBO Max",          "https://www.max.com/search?q=%s",                            "#6B2D8B"),
+    1899:("Max",              "https://www.max.com/search?q=%s",                            "#6B2D8B"),
+    283: ("Crunchyroll",      "https://www.crunchyroll.com/search?q=%s",                    "#F47521"),
+    515: ("MX Player",        "https://www.mxplayer.in/search?title=%s",                    "#FF6B00"),
+    532: ("Aha",              "https://www.aha.video/search/%s",                            "#FFCC00"),
+    11:  ("Mubi",             "https://mubi.com/search?query=%s",                            "#5468FF"),
+}
+
+@app.get("/api/movies/{movie_id}/watch-providers")
+def watch_providers(movie_id: int, country: str = "IN", title: str = ""):
+    """
+    Returns OTT streaming platforms for a movie using TMDB's watch/providers API.
+    country: ISO 3166-1 code — 'IN' for India, 'US' for USA
+    """
+    import urllib.parse
+    r = requests.get(
+        f"{tmdb.base_url}/movie/{movie_id}/watch/providers",
+        params={"api_key": tmdb.api_key},
+        timeout=6
+    )
+    if r.status_code != 200:
+        return {"providers": []}
+
+    results = r.json().get("results", {})
+
+    # Try requested country, fallback to US, then IN
+    country_data = results.get(country) or results.get("US") or results.get("IN") or {}
+    link_page = country_data.get("link", "")
+
+    # Collect flatrate (subscription) providers only — not rent/buy
+    flatrate = country_data.get("flatrate", [])
+
+    providers = []
+    seen_names = set()
+    for p in flatrate:
+        pid = p.get("provider_id")
+        name = p.get("provider_name", "")
+        logo = p.get("logo_path")
+        logo_url = f"https://image.tmdb.org/t/p/w92{logo}" if logo else None
+
+        if name in seen_names:
+            continue
+        seen_names.add(name)
+
+        # Build direct URL — use TMDB's own link_page as fallback
+        if pid in OTT_LINKS:
+            _, url_template, color = OTT_LINKS[pid]
+            encoded_title = urllib.parse.quote(title or name)
+            watch_url = url_template % encoded_title
+        else:
+            watch_url = link_page  # TMDB's JustWatch page
+            color = "#444"
+
+        providers.append({
+            "name": name,
+            "logo": logo_url,
+            "url":  watch_url,
+            "color": OTT_LINKS.get(pid, (None, None, "#444"))[2],
+        })
+
+    return {"providers": providers, "tmdb_link": link_page}
+
+
 @app.get("/api/movies/by-genre/{genre}")
 def movies_by_genre(genre: str, limit: int = 30):
     if genre not in GENRES: raise HTTPException(400, f"Invalid genre.")

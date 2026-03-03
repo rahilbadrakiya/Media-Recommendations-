@@ -763,7 +763,15 @@ window.openModal = async function (id, title) {
   modalMovieId = id;
   body.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:300px"><div class="spinner"></div></div>`;
 
-  // Fetch meta and details in parallel
+  // Track watch history
+  if (user && title) {
+    api('/user/history', 'POST', { username: user.username, movie_title: title }).catch(() => { });
+  }
+
+  // Country for OTT providers: IN for Indian cinema, US otherwise
+  const ottCountry = cinemaMode === 'indian' ? 'IN' : 'US';
+
+  // Fetch everything in parallel
   let movieMeta = null;
   const [searchRes, details] = await Promise.all([
     api(`/movies/search?q=${encodeURIComponent(title)}`),
@@ -771,13 +779,56 @@ window.openModal = async function (id, title) {
   ]);
   movieMeta = searchRes?.[0] || null;
   if (!id && movieMeta) { id = movieMeta.id; }
-  // If we now have an id but no details, fetch details
   const finalDetails = details || (id ? await api(`/movies/${id}/details`) : null);
+
+  // Fetch OTT providers now that we have the id
+  const ottData = id
+    ? await api(`/movies/${id}/watch-providers?country=${ottCountry}&title=${encodeURIComponent(title)}`).catch(() => null)
+    : null;
+  const providers = ottData?.providers || [];
+  const tmdbLink = ottData?.tmdb_link || '';
+
   const backdrop = movieMeta?.backdrop_path || movieMeta?.poster_path || '';
   const trailer = finalDetails?.trailers?.[0];
   const isLiked = user?.liked_movies?.includes(title);
   const inWL = user?.watchlist?.includes(title);
   const myRating = user?.ratings?.[title] || 0;
+
+  // ── OTT badges HTML ──────────────────────────────────────
+  let ottHtml = '';
+  if (providers.length) {
+    ottHtml = `
+      <div class="ott-section">
+        <div class="ott-label">🎬 Watch On</div>
+        <div class="ott-row">
+          ${providers.map(p => `
+            <a class="ott-btn" href="${p.url}" target="_blank" rel="noopener"
+               style="background:${p.color}22;border-color:${p.color}55;"
+               title="Watch on ${p.name}">
+              ${p.logo ? `<img src="${p.logo}" alt="${p.name}" class="ott-logo">` : ''}
+              <span class="ott-name">${p.name}</span>
+              <span class="ott-watch-text">Watch ↗</span>
+            </a>`).join('')}
+          ${tmdbLink ? `<a class="ott-btn ott-more" href="${tmdbLink}" target="_blank" rel="noopener" title="All providers on JustWatch">
+            <span class="ott-name">More Options</span>
+            <span class="ott-watch-text">↗</span>
+          </a>` : ''}
+        </div>
+      </div>`;
+  } else if (id) {
+    // Not on any subscription platform — show JustWatch fallback
+    const jwUrl = `https://www.justwatch.com/in/search?q=${encodeURIComponent(title)}`;
+    ottHtml = `
+      <div class="ott-section">
+        <div class="ott-label">🎬 Where to Watch</div>
+        <div class="ott-row">
+          <a class="ott-btn ott-justwatch" href="${jwUrl}" target="_blank" rel="noopener">
+            <span class="ott-name">🔍 Check JustWatch</span>
+            <span class="ott-watch-text">↗</span>
+          </a>
+        </div>
+      </div>`;
+  }
 
   body.innerHTML = `
     <div class="modal-hero"><img src="${backdrop || ph(960, 280)}" alt="">${backdrop ? '<div class="modal-hero-veil"></div>' : ''}</div>
@@ -800,6 +851,8 @@ window.openModal = async function (id, title) {
         ${[1, 2, 3, 4, 5].map(n => `<span class="star ${myRating >= n ? 'lit' : ''}" onclick="rateMovie('${esc(title)}',${n},${id})" data-val="${n}">★</span>`).join('')}
       </div>
       <p class="modal-overview">${movieMeta?.overview || ''}</p>
+
+      ${ottHtml}
 
       ${trailer ? `<h3 class="modal-sec">🎬 Official Trailer</h3>
         <div class="trailer-wrapper"><iframe src="https://www.youtube.com/embed/${trailer.key}?autoplay=0" allowfullscreen></iframe></div>` : ''}
