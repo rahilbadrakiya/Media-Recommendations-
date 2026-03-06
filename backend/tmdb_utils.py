@@ -14,11 +14,11 @@ class TMDBClient:
             "api_key": self.api_key,
             "query": title
         }
-        response = requests.get(search_url, params=params)
+        response = requests.get(search_url, params=params, timeout=6)
         if response.status_code == 200:
             results = response.json().get("results")
             if results:
-                return results[0] # Return the most relevant result
+                return results[0]
         return None
 
     def get_poster_url(self, poster_path):
@@ -34,7 +34,7 @@ class TMDBClient:
             "api_key": self.api_key,
             "page": page
         }
-        response = requests.get(url, params=params)
+        response = requests.get(url, params=params, timeout=6)
         if response.status_code == 200:
             return response.json().get("results", [])
         return []
@@ -43,7 +43,7 @@ class TMDBClient:
         """Fetch trending movies."""
         url = f"{self.base_url}/trending/movie/{time_window}"
         params = {"api_key": self.api_key}
-        response = requests.get(url, params=params)
+        response = requests.get(url, params=params, timeout=6)
         if response.status_code == 200:
             return response.json().get("results", [])
         return []
@@ -55,9 +55,7 @@ class TMDBClient:
             "api_key": self.api_key,
             "page": page
         }
-        # Use a region lock to avoid spoilers or irrelevant results if needed,
-        # but for now, general upcoming is fine.
-        response = requests.get(url, params=params)
+        response = requests.get(url, params=params, timeout=6)
         if response.status_code == 200:
             return response.json().get("results", [])
         return []
@@ -66,7 +64,7 @@ class TMDBClient:
         """Fetch trailers and other videos for a movie."""
         url = f"{self.base_url}/movie/{movie_id}/videos"
         params = {"api_key": self.api_key}
-        response = requests.get(url, params=params)
+        response = requests.get(url, params=params, timeout=6)
         if response.status_code == 200:
             return response.json().get("results", [])
         return []
@@ -75,7 +73,7 @@ class TMDBClient:
         """Fetch cast and crew for a movie."""
         url = f"{self.base_url}/movie/{movie_id}/credits"
         params = {"api_key": self.api_key}
-        response = requests.get(url, params=params)
+        response = requests.get(url, params=params, timeout=6)
         if response.status_code == 200:
             return response.json().get("cast", [])
         return []

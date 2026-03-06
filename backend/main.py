@@ -1,8 +1,9 @@
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import json, os, sqlite3, hashlib, requests, random, numpy as np
+import json, os, sqlite3, requests, random, logging, numpy as np
+import bcrypt
 from Classifier import KNearestNeighbours
 from tmdb_utils import TMDBClient
 from dotenv import load_dotenv
@@ -10,6 +11,9 @@ from cache import cache, TTL
 import cf_engine  # SVD collaborative filtering
 
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '..', '.env'))
+
+logger = logging.getLogger("cinemate")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
 # Firebase Admin — initialise lazily so the app still works without credentials
 _firebase_ready = False
@@ -27,17 +31,56 @@ def _init_firebase():
         _firebase_ready = True
         return True
     except Exception as e:
-        print(f"[Firebase] Not configured: {e}")
+        logger.warning(f"[Firebase] Not configured: {e}")
         return False
 
 app = FastAPI(title="CineMate API")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+
+# CORS — restrict origins for production; override via ALLOWED_ORIGINS env var
+_default_origins = ["http://localhost:5173", "http://localhost:4173", "http://127.0.0.1:5173"]
+_allowed_origins = os.environ.get("ALLOWED_ORIGINS", "").split(",") if os.environ.get("ALLOWED_ORIGINS") else _default_origins
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_allowed_origins,
+    allow_credentials=True,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type", "Authorization"],
+)
+
+# ── Rate limiting — basic in-memory limiter ──────────────────
+from collections import defaultdict
+import time as _time
+
+_rate_limits: dict[str, list] = defaultdict(list)
+_RATE_WINDOW = 60      # seconds
+_RATE_MAX_AUTH = 10     # max auth requests per window
+_RATE_MAX_CHAT = 20     # max chat requests per window
+
+def _check_rate_limit(client_ip: str, bucket: str, max_reqs: int):
+    key = f"{bucket}:{client_ip}"
+    now = _time.time()
+    _rate_limits[key] = [t for t in _rate_limits[key] if now - t < _RATE_WINDOW]
+    if len(_rate_limits[key]) >= max_reqs:
+        raise HTTPException(429, "Too many requests. Please try again later.")
+    _rate_limits[key].append(now)
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "Data")
-with open(os.path.join(DATA_DIR, "movie_data.json"), encoding="utf-8") as f:
-    movie_data = json.load(f)
-with open(os.path.join(DATA_DIR, "movie_titles.json"), encoding="utf-8") as f:
-    movie_titles = json.load(f)
+try:
+    with open(os.path.join(DATA_DIR, "movie_data.json"), encoding="utf-8") as f:
+        movie_data = json.load(f)
+    with open(os.path.join(DATA_DIR, "movie_titles.json"), encoding="utf-8") as f:
+        movie_titles = json.load(f)
+except FileNotFoundError as e:
+    logger.error(f"Critical data file missing: {e}")
+    movie_data = []
+    movie_titles = []
+except json.JSONDecodeError as e:
+    logger.error(f"Invalid JSON in data file: {e}")
+    movie_data = []
+    movie_titles = []
+
+# O(1) title → index lookup
+_title_to_idx: dict[str, int] = {t[0]: i for i, t in enumerate(movie_titles)}
 
 tmdb = TMDBClient()
 
@@ -79,8 +122,6 @@ def semantic_similar(title: str, top_n: int = 10) -> list:
     return [{"title": _embed_index[i], "similarity": float(sims[i])} for i in top_indices]
 
 # ── Database — SQLite (default) or PostgreSQL (set DATABASE_URL) ──────────────
-DATABASE_URL = os.environ.get("DATABASE_URL", "")  # e.g. postgresql://user:pw@host:5432/cinemate
-
 GENRES = ['Action','Adventure','Animation','Biography','Comedy','Crime','Documentary','Drama',
           'Family','Fantasy','Film-Noir','Game-Show','History','Horror','Music','Musical',
           'Mystery','News','Reality-TV','Romance','Sci-Fi','Short','Sport','Thriller','War','Western']
@@ -121,52 +162,86 @@ def get_db():
     conn.commit()
     return conn, cur
 
-def hash_pw(pw): return hashlib.sha256(pw.encode()).hexdigest()
+def hash_pw(pw: str) -> str:
+    """Hash a password with bcrypt (12 rounds)."""
+    return bcrypt.hashpw(pw.encode(), bcrypt.gensalt(rounds=12)).decode()
+
+def verify_pw(plain: str, hashed: str) -> bool:
+    """Verify password against bcrypt hash. Falls back to SHA256 for legacy rows."""
+    try:
+        return bcrypt.checkpw(plain.encode(), hashed.encode())
+    except (ValueError, TypeError):
+        # Legacy SHA256 hash — verify and migrate on next login
+        import hashlib
+        return hashlib.sha256(plain.encode()).hexdigest() == hashed
+
+def _safe_json(raw, fallback=None):
+    """Safely parse a JSON string from DB. Returns fallback on any error."""
+    if not raw:
+        return fallback if fallback is not None else {}
+    try:
+        return json.loads(raw)
+    except (json.JSONDecodeError, TypeError) as e:
+        logger.warning(f"JSON parse error: {e}")
+        return fallback if fallback is not None else {}
 
 # ─── MODELS ──────────────────────────────────────────────
 class RegisterReq(BaseModel):
-    username: str; password: str; genres: list[str] = []
+    username: str = Field(..., min_length=2, max_length=30, pattern=r'^[a-zA-Z0-9_-]+$')
+    password: str = Field(..., min_length=6, max_length=128)
+    genres: list[str] = []
 
 class LoginReq(BaseModel):
-    username: str; password: str
+    username: str = Field(..., min_length=2, max_length=30)
+    password: str = Field(..., min_length=1, max_length=128)
 
 class MovieRecoReq(BaseModel):
-    movie_title: str; count: int = 20; industry: str = "all"
+    movie_title: str = Field(..., min_length=1, max_length=200)
+    count: int = Field(20, ge=1, le=100)
+    industry: str = Field("all", max_length=20)
 
 class GenreRecoReq(BaseModel):
-    genres: list[str]; min_rating: float = 7.0; count: int = 20; industry: str = "all"
+    genres: list[str] = Field(..., min_length=1, max_length=5)
+    min_rating: float = Field(7.0, ge=0, le=10)
+    count: int = Field(20, ge=1, le=100)
+    industry: str = Field("all", max_length=20)
 
 class MoodRecoReq(BaseModel):
-    mood: str; count: int = 20; industry: str = "all"
+    mood: str = Field(..., min_length=1, max_length=20)
+    count: int = Field(20, ge=1, le=100)
+    industry: str = Field("all", max_length=20)
 
 class LikeReq(BaseModel):
-    username: str; movie_title: str
+    username: str = Field(..., min_length=2, max_length=30)
+    movie_title: str = Field(..., min_length=1, max_length=200)
 
 class WatchlistReq(BaseModel):
-    username: str; movie_title: str
+    username: str = Field(..., min_length=2, max_length=30)
+    movie_title: str = Field(..., min_length=1, max_length=200)
 
 class RateReq(BaseModel):
-    username: str; movie_title: str; rating: float   # 1‑5
+    username: str = Field(..., min_length=2, max_length=30)
+    movie_title: str = Field(..., min_length=1, max_length=200)
+    rating: float = Field(..., ge=1, le=5)
 
 class BatchSearchReq(BaseModel):
-    titles: list[str]
+    titles: list[str] = Field(..., max_length=50)
 
 class ChatReq(BaseModel):
-    message: str
-    username: str = ""
-    industry: str = "all"
-    history: list[dict] = []
+    message: str = Field(..., min_length=1, max_length=1000)
+    username: str = Field("", max_length=30)
+    industry: str = Field("all", max_length=20)
+    history: list[dict] = Field(default_factory=list)
 
 class WatchHistoryReq(BaseModel):
-    username: str
-    movie_id: int
-    movie_title: str
+    username: str = Field(..., min_length=2, max_length=30)
+    movie_id: int = Field(..., ge=1)
+    movie_title: str = Field(..., min_length=1, max_length=200)
 
 # ─── AUTH ─────────────────────────────────────────────────
 @app.post("/api/auth/register")
-def register(req: RegisterReq):
-    if len(req.password) < 6:
-        raise HTTPException(400, "Password must be ≥ 6 characters.")
+def register(req: RegisterReq, request: Request):
+    _check_rate_limit(request.client.host, "auth", _RATE_MAX_AUTH)
     conn, cur = get_db()
     try:
         cur.execute("INSERT INTO users (username,password,fav_genres) VALUES (?,?,?)",
@@ -178,25 +253,38 @@ def register(req: RegisterReq):
     finally: conn.close()
 
 @app.post("/api/auth/login")
-def login(req: LoginReq):
+def login(req: LoginReq, request: Request):
+    _check_rate_limit(request.client.host, "auth", _RATE_MAX_AUTH)
     conn, cur = get_db()
-    cur.execute("SELECT * FROM users WHERE username=? AND password=?", (req.username, hash_pw(req.password)))
-    u = cur.fetchone(); conn.close()
-    if not u: raise HTTPException(401, "Invalid credentials.")
+    cur.execute("SELECT * FROM users WHERE username=?", (req.username,))
+    u = cur.fetchone()
+    if not u:
+        conn.close()
+        raise HTTPException(401, "Invalid credentials.")
+    if not verify_pw(req.password, u["password"]):
+        conn.close()
+        raise HTTPException(401, "Invalid credentials.")
+    # Migrate legacy SHA256 hash to bcrypt on successful login
+    if not u["password"].startswith("$2"):
+        cur.execute("UPDATE users SET password=? WHERE username=?",
+                    (hash_pw(req.password), req.username))
+        conn.commit()
+    conn.close()
     return user_dict(u)
 
 class FirebaseAuthReq(BaseModel):
-    id_token: str
-    username: str = ""   # optional display name from Firebase
-    genres: list[str] = []
+    id_token: str = Field(..., min_length=10, max_length=5000)
+    username: str = Field("", max_length=30)
+    genres: list[str] = Field(default_factory=list)
 
 @app.post("/api/auth/firebase")
-def firebase_auth(req: FirebaseAuthReq):
+def firebase_auth(req: FirebaseAuthReq, request: Request):
     """
     Verify a Firebase ID token and upsert the user in our local DB.
     Returns the same user object as /api/auth/login.
-    Falls back to token-based username if Firebase Admin isn't configured.
+    Requires Firebase Admin to be configured — no unsafe fallback.
     """
+    _check_rate_limit(request.client.host, "auth", _RATE_MAX_AUTH)
     uid = None
     email = None
 
@@ -209,17 +297,10 @@ def firebase_auth(req: FirebaseAuthReq):
         except Exception as e:
             raise HTTPException(401, f"Invalid Firebase token: {e}")
     else:
-        # Firebase Admin not configured — trust the frontend (dev/demo mode)
-        # Use uid extracted from the JWT payload without verification
-        import base64, json as _json
-        try:
-            payload = req.id_token.split(".")[1]
-            payload += "=" * (4 - len(payload) % 4)
-            decoded_payload = _json.loads(base64.urlsafe_b64decode(payload))
-            uid   = decoded_payload.get("user_id") or decoded_payload.get("sub")
-            email = decoded_payload.get("email", "")
-        except Exception:
-            raise HTTPException(401, "Cannot verify token and Firebase Admin is not configured.")
+        # SECURITY: Do NOT decode JWT without verification — reject outright
+        logger.warning("Firebase Admin not configured. Cannot verify tokens. "
+                       "Place firebase-service-account.json in project root.")
+        raise HTTPException(503, "Authentication service not configured. Contact admin.")
 
     if not uid:
         raise HTTPException(401, "Could not extract UID from token.")
@@ -254,10 +335,10 @@ def firebase_auth(req: FirebaseAuthReq):
 def user_dict(u):
     return {
         "username":     u["username"],
-        "genres":       u["fav_genres"].split(",") if u["fav_genres"] else [],
-        "liked_movies": u["liked_movies"].split(",") if u["liked_movies"] else [],
-        "watchlist":    u["watchlist"].split(",") if u["watchlist"] else [],
-        "ratings":      json.loads(u["ratings"]) if u["ratings"] else {}
+        "genres":       [g for g in (u["fav_genres"] or "").split(",") if g],
+        "liked_movies": [x for x in (u["liked_movies"] or "").split(",") if x],
+        "watchlist":    [x for x in (u["watchlist"] or "").split(",") if x],
+        "ratings":      _safe_json(u["ratings"], {}),
     }
 
 # ─── TMDB MOVIE ROUTES ────────────────────────────────────
@@ -340,7 +421,7 @@ def indian_trending(industry: str = "all_indian"):
     # For multi-lang, split and fetch each in parallel
     langs = lang.split(",")
     results = []
-    with ThreadPoolExecutor(max_workers=len(langs)) as pool:
+    with ThreadPoolExecutor(max_workers=min(len(langs), 6)) as pool:
         futures = [pool.submit(_discover_indian, l, "popularity.desc") for l in langs]
         for f in futures:
             results.extend(f.result())
@@ -357,7 +438,7 @@ def indian_now_playing(industry: str = "all_indian"):
     lang = INDUSTRY_LANGS.get(industry, INDUSTRY_LANGS["all_indian"])
     langs = lang.split(",")
     results = []
-    with ThreadPoolExecutor(max_workers=len(langs)) as pool:
+    with ThreadPoolExecutor(max_workers=min(len(langs), 6)) as pool:
         futures = [pool.submit(_discover_indian, l, "primary_release_date.desc") for l in langs]
         for f in futures:
             results.extend(f.result())
@@ -390,7 +471,7 @@ def indian_upcoming(industry: str = "all_indian"):
     results = []
     # Fetch 2 pages per language for a richer list
     tasks = [(l, p) for l in langs for p in [1, 2]]
-    with ThreadPoolExecutor(max_workers=len(tasks)) as pool:
+    with ThreadPoolExecutor(max_workers=min(len(tasks), 10)) as pool:
         futures = [pool.submit(fetch_future, l, p) for l, p in tasks]
         for f in futures:
             results.extend(f.result())
@@ -408,7 +489,7 @@ def indian_top_rated(industry: str = "all_indian"):
     lang = INDUSTRY_LANGS.get(industry, INDUSTRY_LANGS["all_indian"])
     langs = lang.split(",")
     results = []
-    with ThreadPoolExecutor(max_workers=len(langs)) as pool:
+    with ThreadPoolExecutor(max_workers=min(len(langs), 6)) as pool:
         futures = [pool.submit(_discover_indian, l, "vote_average.desc") for l in langs]
         for f in futures:
             results.extend(f.result())
@@ -424,7 +505,7 @@ def search(q: str = Query(..., min_length=1), industry: str = "all"):
     # TMDB search endpoint doesn't natively filter by original_language cleanly in one go for text queries,
     # but we can filter the results post-fetch if it's strictly Indian mode.
     r = requests.get(f"{tmdb.base_url}/search/movie",
-                     params={"api_key": tmdb.api_key, "query": q})
+                     params={"api_key": tmdb.api_key, "query": q}, timeout=6)
     if r.status_code == 200:
         results = r.json().get("results", [])
         if industry != "all":
@@ -440,7 +521,7 @@ def movie_details(movie_id: int):
     # Fetch videos, cast, and similar movies all in parallel
     def get_similar():
         r = requests.get(f"{tmdb.base_url}/movie/{movie_id}/similar",
-                         params={"api_key": tmdb.api_key})
+                         params={"api_key": tmdb.api_key}, timeout=6)
         return fmt(r.json().get("results", [])[:10]) if r.status_code == 200 else []
 
     with ThreadPoolExecutor(max_workers=3) as pool:
@@ -628,14 +709,14 @@ def contextual_movies(industry: str = "all"):
                     langs = lang.split(",")
                     results = [m for m in results if m.get("original_language") in langs]
                 return [m for m in results if m.get("vote_count", 0) > 10][:limit]
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"TMDB keyword search failed: {e}")
         return []
 
     search_terms = FESTIVAL_SEARCH_TERMS.get(ctx_key, [])
     festival_movies_raw = []
     if search_terms:
-        with ThreadPoolExecutor(max_workers=len(search_terms)) as pool:
+        with ThreadPoolExecutor(max_workers=min(len(search_terms), 6)) as pool:
             futures = [pool.submit(tmdb_keyword_search, term) for term in search_terms]
             for f in futures:
                 festival_movies_raw.extend(f.result())
@@ -749,7 +830,7 @@ def fetch_indian_recos(genres: list[str], industry: str, count: int):
     lang = INDUSTRY_LANGS.get(industry, INDUSTRY_LANGS["all_indian"])
     langs = lang.split(",")
     results = []
-    with ThreadPoolExecutor(max_workers=len(langs)) as pool:
+    with ThreadPoolExecutor(max_workers=min(len(langs), 6)) as pool:
         futures = [pool.submit(_discover_internal, l, g_ids) for l in langs]
         for f in futures: results.extend(f.result())
     random.shuffle(results)
@@ -765,10 +846,9 @@ def _discover_internal(lang: str, genres: str):
 @app.post("/api/recommendations/movie")
 def reco_movie(req: MovieRecoReq):
     if req.industry != "all" and req.industry != "hollywood":
-        return fetch_indian_recos(["Drama", "Action"], req.industry, req.count)  # Fallback for movie-based indian recos
-    titles_list = [t[0] for t in movie_titles]
-    if req.movie_title not in titles_list: raise HTTPException(404, "Movie not found.")
-    idx = titles_list.index(req.movie_title)
+        return fetch_indian_recos(["Drama", "Action"], req.industry, req.count)
+    idx = _title_to_idx.get(req.movie_title)
+    if idx is None: raise HTTPException(404, "Movie not found.")
     return knn_recommend(movie_data[idx], req.count)[1:]  # skip self
 
 @app.post("/api/recommendations/genre")
@@ -791,21 +871,22 @@ def reco_mood(req: MoodRecoReq):
 
 @app.get("/api/recommendations/because-you-watched/{title}")
 def because_you_watched(title: str):
-    titles_list = [t[0] for t in movie_titles]
-    if title not in titles_list: raise HTTPException(404, "Movie not found.")
-    idx = titles_list.index(title)
+    idx = _title_to_idx.get(title)
+    if idx is None: raise HTTPException(404, "Movie not found.")
     return {"based_on": title, "recommendations": knn_recommend(movie_data[idx], 10)[1:6]}
 
 # ─── USER DATA ────────────────────────────────────────────
 @app.get("/api/user/{username}/data")
-def get_user_data(username: str):
+def get_user_data(username: str = Query(..., min_length=2, max_length=30)):
     conn, cur = get_db()
-    cur.execute("SELECT * FROM users WHERE username=?", (username,)); u = cur.fetchone(); conn.close()
+    cur.execute("SELECT * FROM users WHERE username=?", (username,))
+    u = cur.fetchone()
+    conn.close()
     if not u: raise HTTPException(404, "User not found.")
     return {
-        "liked_movies": u["liked_movies"].split(",") if u["liked_movies"] else [],
-        "watchlist": u["watchlist"].split(",") if u["watchlist"] else [],
-        "ratings": json.loads(u["ratings"]) if u["ratings"] else {}
+        "liked_movies": [x for x in (u["liked_movies"] or "").split(",") if x],
+        "watchlist": [x for x in (u["watchlist"] or "").split(",") if x],
+        "ratings": _safe_json(u["ratings"], {}),
     }
 
 @app.post("/api/user/likes")
@@ -834,11 +915,10 @@ def toggle_watchlist(req: WatchlistReq):
 
 @app.post("/api/user/rate")
 def rate_movie(req: RateReq):
-    if not (1 <= req.rating <= 5): raise HTTPException(400, "Rating must be 1-5.")
     conn, cur = get_db()
     cur.execute("SELECT ratings FROM users WHERE username=?", (req.username,)); row = cur.fetchone()
     if not row: conn.close(); raise HTTPException(404, "User not found.")
-    ratings = json.loads(row["ratings"]) if row["ratings"] else {}
+    ratings = _safe_json(row["ratings"], {})
     ratings[req.movie_title] = req.rating
     cur.execute("UPDATE users SET ratings=? WHERE username=?", (json.dumps(ratings), req.username))
     conn.commit(); conn.close()
@@ -858,7 +938,7 @@ def user_taste_profile(username: str):
         raise HTTPException(404, "User not found.")
 
     liked = [x for x in (row["liked_movies"] or "").split(",") if x]
-    ratings = json.loads(row["ratings"]) if row["ratings"] else {}
+    ratings = _safe_json(row["ratings"], {})
     fav_genres = [x for x in (row["fav_genres"] or "").split(",") if x]
 
     # Combine into a high-signal pool of titles
@@ -866,10 +946,9 @@ def user_taste_profile(username: str):
 
     # Analyze genres of loved movies
     genre_counts = {g: 0 for g in GENRES}
-    titles_list = [t[0] for t in movie_titles]
     for title in loved_titles:
-        if title in titles_list:
-            idx = titles_list.index(title)
+        idx = _title_to_idx.get(title)
+        if idx is not None:
             movie_vec = movie_data[idx]
             for i, g in enumerate(GENRES):
                 if movie_vec[i] == 1:
@@ -932,10 +1011,9 @@ def semantic_similar_endpoint(title: str, count: int = 10):
         return result
 
     # Fallback: KNN
-    titles_list = [t[0] for t in movie_titles]
-    if title not in titles_list:
+    idx = _title_to_idx.get(title)
+    if idx is None:
         raise HTTPException(404, "Movie not found in dataset.")
-    idx = titles_list.index(title)
     knn = knn_recommend(movie_data[idx], count + 1)[1:]   # skip self
     result = [{"title": m["title"], "similarity_pct": None} for m in knn]
     cache.set(ck, result, TTL["content_similar"])
@@ -1034,7 +1112,7 @@ def for_you(username: str, industry: str = "all", count: int = 20):
         raise HTTPException(404, "User not found.")
 
     liked = [x for x in (row["liked_movies"] or "").split(",") if x]
-    ratings = json.loads(row["ratings"]) if row["ratings"] else {}
+    ratings = _safe_json(row["ratings"], {})
 
     # Build weighted pool: liked movies + highly rated movies
     seed_titles = list(set(liked + [t for t, r in ratings.items() if float(r) >= 4.0]))
@@ -1042,13 +1120,12 @@ def for_you(username: str, industry: str = "all", count: int = 20):
         # Fallback to popular
         return fmt(tmdb.get_trending()[:count])
 
-    titles_list = [t[0] for t in movie_titles]
     score_map = {}  # title -> cumulative score
 
     for seed in seed_titles[:8]:  # cap at 8 seeds for performance
-        if seed not in titles_list:
+        idx = _title_to_idx.get(seed)
+        if idx is None:
             continue
-        idx = titles_list.index(seed)
         weight = float(ratings.get(seed, 3)) / 5.0  # 0.2–1.0
         recs = knn_recommend(movie_data[idx], 15)
         for r in recs:
@@ -1175,7 +1252,7 @@ def hybrid_recommend(username: str = "", industry: str = "all", count: int = 20,
         lang = INDUSTRY_LANGS.get(industry, INDUSTRY_LANGS["all_indian"])
         langs = lang.split(",")
         trending_raw = []
-        with ThreadPoolExecutor(max_workers=len(langs)) as pool:
+        with ThreadPoolExecutor(max_workers=min(len(langs), 6)) as pool:
             futures = [pool.submit(_discover_indian, l, "popularity.desc") for l in langs]
             for f in futures:
                 trending_raw.extend(f.result())
@@ -1210,15 +1287,14 @@ def hybrid_recommend(username: str = "", industry: str = "all", count: int = 20,
         if row:
             user_genres = [g for g in (row["fav_genres"] or "").split(",") if g]
             liked = [x for x in (row["liked_movies"] or "").split(",") if x]
-            ratings_map = json.loads(row["ratings"]) if row["ratings"] else {}
+            ratings_map = _safe_json(row["ratings"], {})
             is_cold_start = len(liked) + len(ratings_map) < 3
 
     # Build liked genres from user's history
     liked_genres = set(user_genres)
-    titles_list = [t[0] for t in movie_titles]
     for title in (liked + list(ratings_map.keys()))[:10]:
-        if title in titles_list:
-            idx = titles_list.index(title)
+        idx = _title_to_idx.get(title)
+        if idx is not None:
             row_data = movie_data[idx]
             for gi, g in enumerate(GENRES):
                 if row_data[gi] == 1:
@@ -1403,8 +1479,8 @@ def log_interaction(req: InteractionReq):
         }
         with open(log_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(entry) + "\n")
-    except Exception:
-        pass  # Never fail silently — interaction logging is best-effort
+    except Exception as e:
+        logger.warning(f"Interaction log write failed: {e}")
 
     return {"ok": True}
 
@@ -1412,11 +1488,12 @@ def log_interaction(req: InteractionReq):
 
 # ─── AI CHATBOT (Gemini) ──────────────────────────────────
 @app.post("/api/chat")
-def chat_endpoint(req: ChatReq):
+def chat_endpoint(req: ChatReq, request: Request):
     """
     AI chatbot powered by Gemini. Understands mood/vibe/genre/time
     prompts and returns both a reply + movie recommendations.
     """
+    _check_rate_limit(request.client.host, "chat", _RATE_MAX_CHAT)
     import re
     gemini_key = os.environ.get("GEMINI_API_KEY", "")
 
@@ -1463,7 +1540,7 @@ Rules:
                 ai_reply = ai_reply[:json_match.start()].strip()
         except Exception as e:
             ai_reply = f"I'd love to help with that! Let me find some great picks for you. 🎬"
-            print(f"[Gemini Error] {e}")
+            logger.warning(f"Gemini API error: {type(e).__name__}")
     else:
         # Fallback: keyword-based NLP without AI
         msg_lower = req.message.lower()

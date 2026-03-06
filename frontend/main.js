@@ -6,7 +6,7 @@ import {
   firebaseForgotPassword, firebaseLogout, getIdToken, onAuthChange
 } from './firebase.js';
 
-const API = 'http://localhost:8000/api';
+const API = (import.meta.env.VITE_API_URL || '') + '/api';
 
 // ── STATE ─────────────────────────────────────
 let user = JSON.parse(localStorage.getItem('cm_user')) || null;
@@ -145,7 +145,7 @@ function setupNavScroll() {
 function renderAuthBar() {
   const el = document.getElementById('nav-auth');
   el.innerHTML = user
-    ? `<button class="btn btn-ghost btn-sm" onclick="navigateTo('profile')">👤 ${user.username}</button>
+    ? `<button class="btn btn-ghost btn-sm" onclick="navigateTo('profile')">👤 ${esc(user.username)}</button>
        <button class="btn btn-primary btn-sm" onclick="logout()">Logout</button>`
     : `<button class="btn btn-outline btn-sm" onclick="navigateTo('login')">Login</button>
        <button class="btn btn-primary btn-sm" onclick="navigateTo('register')">Join Free</button>`;
@@ -154,6 +154,7 @@ function renderAuthBar() {
 function logout() {
   firebaseLogout().catch(() => { });
   user = null; localStorage.removeItem('cm_user');
+  chatHistory = [];
   renderAuthBar(); toast('Logged out', 'ok'); navigateTo('home');
 }
 
@@ -169,11 +170,11 @@ function setupSearch() {
     searchTimer = setTimeout(async () => {
       const mode = cinemaMode === 'indian' ? industry : 'hollywood';
       const res = await api(`/movies/search?q=${encodeURIComponent(q)}&industry=${mode}`);
-      if (!res?.length) { dd.innerHTML = `<div class="si"><span style="color:var(--t3)">No results for "${q}"</span></div>`; dd.classList.remove('hidden'); return; }
+      if (!res?.length) { dd.innerHTML = `<div class="si"><span style="color:var(--t3)">No results for "${esc(q)}"</span></div>`; dd.classList.remove('hidden'); return; }
       dd.innerHTML = res.map(m => `
         <div class="si" onclick="openModal(${m.id},'${esc(m.title)}');document.getElementById('search-dropdown').classList.add('hidden')">
-          <img src="${m.poster_path || ph(40, 63)}" alt="">
-          <div><div class="si-title">${m.title}</div>
+          <img src="${m.poster_path || ph(40, 63)}" alt="${esc(m.title)}">
+          <div><div class="si-title">${esc(m.title)}</div>
           <div class="si-meta">${m.release_date?.slice(0, 4) || ''} · ★ ${m.vote_average?.toFixed(1) || 'N/A'}</div></div>
         </div>`).join('');
       dd.classList.remove('hidden');
@@ -241,7 +242,7 @@ async function renderHome(app) {
           <div class="hybrid-inner">
             <span class="hybrid-icon">🧠</span>
             <div>
-              <div class="hybrid-title">AI Picks For ${user.username}</div>
+              <div class="hybrid-title">AI Picks For ${esc(user.username)}</div>
               <div class="hybrid-sub">Trending · Taste · Similarity · Recency · Genre-balanced</div>
             </div>
           </div>
@@ -358,7 +359,7 @@ async function renderIndianHome(app) {
           <div class="hybrid-inner">
             <span class="hybrid-icon">🧠</span>
             <div>
-              <div class="hybrid-title">AI Picks For ${user.username}</div>
+              <div class="hybrid-title">AI Picks For ${esc(user.username)}</div>
               <div class="hybrid-sub">Trending · Taste · Similarity · Recency combined</div>
             </div>
           </div>
@@ -443,7 +444,7 @@ function buildHero(m, bg) {
       <div class="hero-bg" style="background-image:url('${bg}')"></div>
       <div class="hero-overlay">
         <div class="hero-badge">🔥 Trending Now</div>
-        <h1 class="hero-title">${m.title}</h1>
+        <h1 class="hero-title">${esc(m.title)}</h1>
         <div class="hero-meta">
           <span class="hero-rating">★ ${m.vote_average?.toFixed(1) || 'N/A'}</span>
           <span style="color:var(--t2)">${m.release_date?.slice(0, 4) || ''}</span>
@@ -716,12 +717,12 @@ function upcomingCard(m, i) {
         </div>
       </div>
       <div class="uc-info">
-        <div class="uc-title">${m.title}</div>
+        <div class="uc-title">${esc(m.title)}</div>
         <div class="uc-meta">
           <span class="uc-date">📅 ${fullDate}</span>
           ${rating !== 'TBD' ? `<span class="uc-rating">★ ${rating}</span>` : `<span class="uc-rating-tbd">★ TBD</span>`}
         </div>
-        ${m.overview ? `<p class="uc-overview">${m.overview.slice(0, 110)}...</p>` : ''}
+        ${m.overview ? `<p class="uc-overview">${esc(m.overview.slice(0, 110))}...</p>` : ''}
       </div>
     </div>`;
 }
@@ -864,7 +865,7 @@ window.openModal = async function (id, title) {
           ${inWL ? '✅ In Watchlist' : '+ Watchlist'}
         </button>
       </div>
-      <h2 class="modal-title">${movieMeta?.title || title}</h2>
+      <h2 class="modal-title">${esc(movieMeta?.title || title)}</h2>
       <div class="modal-meta-row">
         <span class="mc-rating">★ ${movieMeta?.vote_average?.toFixed(1) || 'N/A'}</span>
         <span>${movieMeta?.release_date || ''}</span>
@@ -1028,10 +1029,10 @@ async function renderProfile(app) {
   app.innerHTML = `
     <div class="profile-wrap">
       <div class="profile-head">
-        <div class="profile-av">${user.username[0].toUpperCase()}</div>
+        <div class="profile-av">${esc(user.username[0]).toUpperCase()}</div>
         <div>
-          <h2 style="font-size:1.8rem;font-weight:800">${user.username}</h2>
-          <p style="color:var(--t2)">${user.genres?.join(' · ') || 'No genres set'}</p>
+          <h2 style="font-size:1.8rem;font-weight:800">${esc(user.username)}</h2>
+          <p style="color:var(--t2)">${user.genres?.map(g => esc(g)).join(' · ') || 'No genres set'}</p>
         </div>
       </div>
       <div class="tab-bar">
@@ -1072,7 +1073,7 @@ window.switchTab = async function (tab) {
     if (!entries.length) { el.innerHTML = `<p style="color:var(--t3);padding:2rem">You haven't rated anything yet.</p>`; return; }
     el.innerHTML = `<div style="display:flex;flex-direction:column;gap:12px;max-width:600px">
       ${entries.map(([t, r]) => `<div style="display:flex;align-items:center;justify-content:space-between;background:var(--bg3);border:1px solid var(--border);border-radius:var(--r-sm);padding:14px 20px">
-        <span style="font-weight:700">${t}</span>
+        <span style="font-weight:700">${esc(t)}</span>
         <span style="color:var(--gold)">${'★'.repeat(r)}${'☆'.repeat(5 - r)}</span>
       </div>`).join('')}
     </div>`;
@@ -1167,7 +1168,7 @@ window.rateMovie = async function (title, rating, id) {
     const res = await api('/user/rate', 'POST', { username: user.username, movie_title: title, rating });
     user.ratings = res.ratings; localStorage.setItem('cm_user', JSON.stringify(user));
     // Update stars in modal
-    const row = document.getElementById(`star - row - ${id}`);
+    const row = document.getElementById(`star-row-${id}`);
     if (row) row.querySelectorAll('.star').forEach(s => s.classList.toggle('lit', parseInt(s.dataset.val) <= rating));
     toast(`Rated ${rating}★`, 'ok');
   } catch (e) { toast('Rating failed', 'err'); }
@@ -1180,18 +1181,18 @@ function tmdbCard(m, i = 0) {
   const d = Math.min(i * 0.04, 0.5);
   const reason = m.reason || '';
   return `
-      < div class= "mc" style = "animation-delay:${d}s" onclick = "openModal(${m.id || 0},'${esc(m.title)}')" >
-      <img class="mc-poster" src="${poster}" loading="lazy" alt="${m.title}">
-        ${reason ? `<div class="mc-reason-tag">${reason}</div>` : ''}
+      <div class="mc" style="animation-delay:${d}s" onclick="openModal(${m.id || 0},'${esc(m.title)}')">
+      <img class="mc-poster" src="${poster}" loading="lazy" alt="${esc(m.title)}">
+        ${reason ? `<div class="mc-reason-tag">${esc(reason)}</div>` : ''}
         <div class="mc-overlay">
-          <div class="mc-name">${m.title}</div>
+          <div class="mc-name">${esc(m.title)}</div>
           <div class="mc-meta-row"><span class="mc-rating">★${rating}</span><span class="mc-year">${m.release_date?.slice(0, 4) || ''}</span></div>
         </div>
         <div class="mc-actions">
           <button class="mc-btn ${user?.liked_movies?.includes(m.title) ? 'liked' : ''}" onclick="event.stopPropagation();toggleLike('${esc(m.title)}')" title="Like">♥</button>
           <button class="mc-btn ${user?.watchlist?.includes(m.title) ? 'in-watchlist' : ''}" onclick="event.stopPropagation();addToWatchlist('${esc(m.title)}')" title="Watchlist">🎯</button>
         </div>
-        <div class="mc-bottom"><div class="mc-bottom-title">${m.title}</div></div>
+        <div class="mc-bottom"><div class="mc-bottom-title">${esc(m.title)}</div></div>
       </div>`;
 }
 
@@ -1201,21 +1202,21 @@ function localCard(m, i = 0, grid = false) {
   const placeholder = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
   const displayImage = m.poster_path || placeholder;
   return `
-      < div class= "mc" style = "${grid ? '' : 'flex:0 0 175px;'} animation-delay:${d}s" onclick = "openModal(0,'${esc(m.title)}')" >
+      <div class="mc" style="${grid ? '' : 'flex:0 0 175px;'} animation-delay:${d}s" onclick="openModal(0,'${esc(m.title)}')">
       <div class="mc-poster-wrap" style="position:relative; width:100%; aspect-ratio:2/3; background:var(--bg3); display:flex; align-items:center; justify-content:center; overflow:hidden;">
         <div class="spinner" style="position:absolute; transform:scale(0.5); opacity:0.3; z-index:1;"></div>
-        <img class="mc-poster" src="${displayImage}" loading="lazy" alt="${m.title}" id="lc-${i}-${m.title.slice(0, 5).replace(/[\s'"]/g, '_')}" style="position:relative; z-index:2; transition: opacity 0.3s ease; opacity: 0;" onload="this.style.opacity=1">
+        <img class="mc-poster" src="${displayImage}" loading="lazy" alt="${esc(m.title)}" id="lc-${i}-${m.title.slice(0, 5).replace(/[\s'"]/g, '_')}" style="position:relative; z-index:2; transition: opacity 0.3s ease; opacity: 0;" onload="this.style.opacity=1">
       </div>
       <div class="mc-overlay">
-        <div class="mc-name">${m.title}</div>
+        <div class="mc-name">${esc(m.title)}</div>
         <div class="mc-meta-row"><span class="mc-rating">★${m.rating?.toFixed(1) || 'N/A'}</span></div>
       </div>
       <div class="mc-actions">
         <button class="mc-btn" onclick="event.stopPropagation();toggleLike('${esc(m.title)}')" title="Like">♥</button>
         <button class="mc-btn" onclick="event.stopPropagation();addToWatchlist('${esc(m.title)}')" title="Watchlist">🎯</button>
       </div>
-      <div class="mc-bottom"><div class="mc-bottom-title">${m.title}</div></div>
-    </div > `;
+      <div class="mc-bottom"><div class="mc-bottom-title">${esc(m.title)}</div></div>
+    </div>`;
 }
 
 // Batch-load posters: one API call for all titles, update DOM as they arrive
@@ -1224,8 +1225,8 @@ async function batchLoadPosters(titles, container) {
   try {
     const batchMap = await api('/movies/batch-search', 'POST', { titles });
     titles.forEach((title, i) => {
-      const safeId = `lc - ${i} - ${title.slice(0, 5).replace(/[\s'"]/g, '_')}`;
-      const img = container.querySelector(`#${safeId}`);
+      const safeId = `lc-${i}-${title.slice(0, 5).replace(/[\s'"]/g, '_')}`;
+      const img = document.getElementById(safeId);
       const data = batchMap[title];
       if (img && data?.poster_path) img.src = data.poster_path;
     });
@@ -1241,7 +1242,7 @@ async function api(endpoint, method = 'GET', body = null) {
   return res.json();
 }
 
-function esc(s = '') { return String(s).replace(/'/g, "\\'").replace(/"/g, '&quot;'); }
+function esc(s = '') { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/'/g,'&#39;').replace(/"/g,'&quot;'); }
 function ph(w, h) { return `https://via.placeholder.com/${w}x${h}/16162a/505070?text=...`; }
 function skelGrid(n) { return Array(n).fill('<div class="skel" style="aspect-ratio:2/3;border-radius:16px"></div>').join(''); }
 
@@ -1341,7 +1342,10 @@ function appendChatMsg(text, role) {
   if (!msgs) return;
   const d = document.createElement('div');
   d.className = `chat-msg ${role}`;
-  d.innerHTML = `<div class="chat-bubble-msg">${text}</div>`;
+  const bubble = document.createElement('div');
+  bubble.className = 'chat-bubble-msg';
+  bubble.textContent = text;
+  d.appendChild(bubble);
   msgs.appendChild(d);
   msgs.scrollTop = msgs.scrollHeight;
 }
@@ -1354,16 +1358,12 @@ function chatMovieCard(m) {
   return `
     <div class="chat-mc" onclick="openModal(${id},'${esc(title)}')">
       <img src="${poster}" alt="${esc(title)}" onerror="this.src='${ph(100, 150)}'">
-      <div class="chat-mc-title">${title}</div>
+      <div class="chat-mc-title">${esc(title)}</div>
       ${rating ? `<div class="chat-mc-rating">${rating}</div>` : ''}
     </div>`;
 }
 
-// Enter key sends message
-document.getElementById('chat-input')?.addEventListener('keydown', e => {
-  if (e.key === 'Enter') sendChatMessage();
-});
-// Defer binding since element may be in static HTML
+// Enter key sends message (deferred since element is in static HTML)
 document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('chat-input')?.addEventListener('keydown', e => {
     if (e.key === 'Enter') sendChatMessage();
