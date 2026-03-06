@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CineMate — Your AI Movie Universe</title>
+    <meta name="description"
+        content="Personalized movie recommendations powered by AI. Discover, explore, and fall in love with cinema again.">
+    <link rel="icon"
+        href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎬</text></svg>">
+    <link
+        href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700;800;900&family=Bebas+Neue&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="/style.css">
+</head>
+
+<body>
+
+    <!-- Floating Particles Canvas -->
+    <canvas id="particles-canvas"></canvas>
+
+    <!-- Navbar -->
+    <nav id="navbar">
+        <div class="nav-inner">
+            <a class="nav-logo" onclick="navigateTo('home')">CINEMATE</a>
+            <div class="nav-links" id="nav-links">
+                <a class="nav-link active" data-page="home" onclick="navigateTo('home')">Home</a>
+                <a class="nav-link" data-page="browse" onclick="navigateTo('browse')">Browse</a>
+                <a class="nav-link" data-page="upcoming" onclick="navigateTo('upcoming')">🗓️ Upcoming</a>
+            </div>
+            <div class="nav-search-wrap">
+                <div class="search-box">
+                    <span class="search-icon">🔍</span>
+                    <input id="search-input" type="text" placeholder="Search or describe a movie..."
+                        autocomplete="off" />
+                </div>
+                <div id="search-dropdown" class="search-dropdown hidden"></div>
+            </div>
+            <div class="nav-auth" id="nav-auth"></div>
+        </div>
+    </nav>
+
+    <!-- Main App -->
+    <main id="app"></main>
+
+    <!-- Movie Detail Modal -->
+    <div id="movie-modal" class="modal hidden">
+        <div class="modal-backdrop" onclick="closeModal()"></div>
+        <div class="modal-sheet">
+            <button class="modal-close" onclick="closeModal()">✕</button>
+            <div id="modal-body"></div>
+        </div>
+    </div>
+
+    <!-- Toast -->
+    <div id="toasts"></div>
+
+    <!-- ── AI CHATBOT ─────────────────────────────── -->
+    <div id="chat-bubble" onclick="toggleChat()" title="Ask CineMate AI">
+        <span id="chat-bubble-icon">🤖</span>
+        <span id="chat-bubble-label">AI Pick</span>
+    </div>
+
+    <div id="chat-panel" class="chat-panel hidden">
+        <div class="chat-header">
+            <div class="chat-header-left">
+                <div class="chat-avatar">🎬</div>
+                <div>
+                    <div class="chat-header-title">CineMate AI</div>
+                    <div class="chat-header-sub">Powered by Gemini · Always online</div>
+                </div>
+            </div>
+            <button class="chat-close-btn" onclick="toggleChat()">✕</button>
+        </div>
+        <div class="chat-messages" id="chat-messages">
+            <div class="chat-msg bot">
+                <div class="chat-bubble-msg">
+                    👋 Hey! I'm CineMate AI. Tell me what you're in the mood for — like <em>"dark thriller like Se7en
+                        but modern"</em> or <em>"something feel-good under 2 hours"</em> — and I'll find perfect picks!
+                    🍿
+                </div>
+            </div>
+        </div>
+        <div class="chat-suggestions" id="chat-suggestions">
+            <button onclick="sendChatSuggestion('dark thriller like Se7en but modern')">😈 Dark Thriller</button>
+            <button onclick="sendChatSuggestion('feel good comedy for family night')">😄 Family Fun</button>
+            <button onclick="sendChatSuggestion('mind bending sci-fi like Interstellar')">🤯 Mind-Bending</button>
+            <button onclick="sendChatSuggestion('romantic movie under 2 hours')">💕 Romance</button>
+        </div>
+        <div class="chat-input-row">
+            <input id="chat-input" type="text" placeholder="Describe what you want to watch..." autocomplete="off" />
+            <button id="chat-send-btn" onclick="sendChatMessage()">➤</button>
+        </div>
+    </div>
+
+    <script type="module" src="/main.js"></script>
+</body>
+
+</html>

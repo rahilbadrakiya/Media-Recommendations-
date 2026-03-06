@@ -1,0 +1,16 @@
+fastapi
+uvicorn[standard]
+python-dotenv
+requests
+pandas
+numpy
+python-multipart
+google-generativeai
+firebase-admin
+bcrypt
+# ML — Recommendation Engine
+scikit-learn
+scipy
+sentence-transformers
+# Database — PostgreSQL (optional, falls back to SQLite)
+psycopg2-binary

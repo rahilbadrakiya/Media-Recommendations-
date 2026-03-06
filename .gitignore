@@ -1,38 +1,56 @@
-# Python
+# ── Python ────────────────────────────────────────────────
 __pycache__/
 *.py[cod]
-*$py.class
+*.pyo
+*.pyd
 *.so
-.Python
-env/
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
 *.egg
+*.egg-info/
+dist/
+build/
+.eggs/
 
-# Streamlit
-.streamlit/
+# ── Virtual Environment ────────────────────────────────────
+.venv/
+venv/
+env/
 
-# OS
+# ── Environment Variables (NEVER commit real keys) ────────
+.env
+
+# ── Database (local user data) ────────────────────────────
+users.db
+
+# ── Interaction log (local CF training data) ─────────────
+interactions.jsonl
+
+# ── Firebase Service Account (sensitive) ─────────────────
+firebase-service-account.json
+
+# ── Node / Vite ───────────────────────────────────────────
+node_modules/
+frontend/node_modules/
+dist/
+.vite/
+
+# ── OS Files ──────────────────────────────────────────────
 .DS_Store
 Thumbs.db
+desktop.ini
 
-# Project Specific
+# ── IDE ───────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ── Jupyter ───────────────────────────────────────────────
+.ipynb_checkpoints/
+
+# ── Streamlit (legacy) ────────────────────────────────────
+.streamlit/
+
+# ── Misc ──────────────────────────────────────────────────
 *.rar
-New Text Document.txt
-debug_poster.py
-reproduce_issue.py
+*.zip
 Screenshots/
-users.db
-# users.db is local data, don't push it unless you want to ship a default db
